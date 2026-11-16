@@ -276,8 +276,8 @@ public class MainActivity extends Activity {
         gameScaleCard.addView(freeFireRestore);
         robloxDown.setOnClickListener(v -> requestShellAction("game_apply", "com.roblox.client"));
         robloxRestore.setOnClickListener(v -> requestShellAction("game_restore", "com.roblox.client"));
-        freeFireDown.setOnClickListener(v -> requestShellAction("game_apply", "com.dts.freefireth"));
-        freeFireRestore.setOnClickListener(v -> requestShellAction("game_restore", "com.dts.freefireth"));
+        freeFireDown.setOnClickListener(v -> requestFreeFireDownscale());
+        freeFireRestore.setOnClickListener(v -> requestFreeFireRestore());
 
         advancedResultText = makeText("Nenhuma operação avançada executada.", 13, 0xFFE5ECF8, false);
         gameScaleCard.addView(advancedResultText);
@@ -474,7 +474,7 @@ public class MainActivity extends Activity {
         try {
             Shizuku.UserServiceArgs args = new Shizuku.UserServiceArgs(
                 new ComponentName(getPackageName(), GameTurboShellService.class.getName())
-            ).tag("gameturbo-shell").daemon(false).processNameSuffix("shell").version(1);
+            ).tag("gameturbo-shell").daemon(false).processNameSuffix("shell").debuggable(BuildConfig.DEBUG).version(1);
             shellServiceBinding = true;
             Shizuku.bindUserService(args, shellServiceConnection);
             Toast.makeText(this, "Conectando ao controle avançado…", Toast.LENGTH_SHORT).show();
@@ -503,6 +503,37 @@ public class MainActivity extends Activity {
             }
         }
         refreshCacheStatus();
+    }
+
+    private String installedFreeFirePackage() {
+        if (getPackageManager().getLaunchIntentForPackage("com.dts.freefireth") != null) {
+            return "com.dts.freefireth";
+        }
+        if (getPackageManager().getLaunchIntentForPackage("com.dts.freefiremax") != null) {
+            return "com.dts.freefiremax";
+        }
+        return null;
+    }
+
+    private void requestFreeFireDownscale() {
+        String pkg = installedFreeFirePackage();
+        if (pkg == null) {
+            Toast.makeText(this, "Free Fire ou Free Fire MAX não está instalado.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        requestShellAction("game_apply", pkg);
+    }
+
+    private void requestFreeFireRestore() {
+        String normalKey = "game_overlay_original_com.dts.freefireth";
+        String maxKey = "game_overlay_original_com.dts.freefiremax";
+        String pkg = getPreferences(MODE_PRIVATE).contains(normalKey) ? "com.dts.freefireth" :
+            (getPreferences(MODE_PRIVATE).contains(maxKey) ? "com.dts.freefiremax" : installedFreeFirePackage());
+        if (pkg == null) {
+            Toast.makeText(this, "Free Fire ou Free Fire MAX não está instalado.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        requestShellAction("game_restore", pkg);
     }
 
     private void requestShellAction(String action, String argument) {
