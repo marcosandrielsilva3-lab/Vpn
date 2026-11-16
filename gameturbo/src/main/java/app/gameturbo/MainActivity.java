@@ -260,25 +260,36 @@ public class MainActivity extends Activity {
         resolutionReset.setOnClickListener(v -> requestShellAction("display_reset", null));
 
         addSpace(page, 14);
-        LinearLayout gameScaleCard = card(page, "REDUZIR RESOLUÇÃO DE RENDERIZAÇÃO DOS JOGOS");
+        LinearLayout gameScaleCard = card(page, "MODO MASSINHA — ABRIR O JOGO COM GRÁFICO REDUZIDO");
         TextView gameScaleHint = makeText(
-            "O Android pode reduzir o buffer gráfico para 70% em jogos compatíveis (Android 13+ e suporte do fabricante/jogo). Reinicie o jogo após aplicar. Isso reduz a resolução renderizada, mas não substitui os arquivos de textura.",
+            "Toque no jogo para solicitar ao Android a renderização em 70% e abrir o jogo. Precisa do Shizuku e de suporte do Android/fabricante/jogo. Depois, use o gráfico mínimo dentro do próprio jogo para reduzir ainda mais os detalhes.",
             13, 0xFF9EACC6, false
         );
         gameScaleCard.addView(gameScaleHint);
-        Button robloxDown = makeButton("Roblox: reduzir renderização (70%)");
-        Button robloxRestore = makeButton("Roblox: restaurar padrão");
-        Button freeFireDown = makeButton("Free Fire: reduzir renderização (70%)");
-        Button freeFireRestore = makeButton("Free Fire: restaurar padrão");
+        Button robloxDown = makeButton("ATIVAR MASSINHA + ABRIR ROBLOX");
+        Button robloxRestore = makeButton("Roblox: restaurar gráfico normal");
+        Button freeFireDown = makeButton("ATIVAR MASSINHA + ABRIR FREE FIRE");
+        Button freeFireRestore = makeButton("Free Fire: restaurar gráfico normal");
         gameScaleCard.addView(robloxDown);
         gameScaleCard.addView(robloxRestore);
         gameScaleCard.addView(freeFireDown);
         gameScaleCard.addView(freeFireRestore);
-        robloxDown.setOnClickListener(v -> requestShellAction("game_apply", "com.roblox.client"));
+        robloxDown.setOnClickListener(v -> {
+            if (getPackageManager().getLaunchIntentForPackage("com.roblox.client") == null) {
+                Toast.makeText(this, "Roblox não está instalado.", Toast.LENGTH_LONG).show();
+            } else {
+                requestShellAction("game_apply_launch", "com.roblox.client");
+            }
+        });
         robloxRestore.setOnClickListener(v -> requestShellAction("game_restore", "com.roblox.client"));
-        freeFireDown.setOnClickListener(v -> requestFreeFireDownscale());
+        freeFireDown.setOnClickListener(v -> requestFreeFireDownscale(true));
         freeFireRestore.setOnClickListener(v -> requestFreeFireRestore());
 
+        TextView gameInstructions = makeText(
+            "AJUSTE DENTRO DO JOGO:\nRoblox: Menu > Configurações > Modo gráfico Manual > arraste Qualidade gráfica totalmente para a esquerda.\nFree Fire: Gráficos > Suave; desligue Alta resolução e Sombras. Se ainda travar ou aquecer, teste FPS Normal.",
+            13, 0xFFE5ECF8, false
+        );
+        gameScaleCard.addView(gameInstructions);
         advancedResultText = makeText("Nenhuma operação avançada executada.", 13, 0xFFE5ECF8, false);
         gameScaleCard.addView(advancedResultText);
 
@@ -515,13 +526,13 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    private void requestFreeFireDownscale() {
+    private void requestFreeFireDownscale(boolean launchAfter) {
         String pkg = installedFreeFirePackage();
         if (pkg == null) {
             Toast.makeText(this, "Free Fire ou Free Fire MAX não está instalado.", Toast.LENGTH_LONG).show();
             return;
         }
-        requestShellAction("game_apply", pkg);
+        requestShellAction(launchAfter ? "game_apply_launch" : "game_apply", pkg);
     }
 
     private void requestFreeFireRestore() {
@@ -600,7 +611,7 @@ public class MainActivity extends Activity {
                         result = shellService.restoreDisplaySize(saved);
                         if (isShellSuccess(result)) getPreferences(MODE_PRIVATE).edit().remove("original_display_override").apply();
                     }
-                } else if ("game_apply".equals(action)) {
+                } else if ("game_apply".equals(action) || "game_apply_launch".equals(action)) {
                     String pkg = argument;
                     String key = "game_overlay_original_" + pkg;
                     if (!getPreferences(MODE_PRIVATE).contains(key)) {
@@ -614,6 +625,17 @@ public class MainActivity extends Activity {
                         getPreferences(MODE_PRIVATE).edit().putString(key, oldValue.isEmpty() ? "__NONE__" : oldValue).apply();
                     }
                     result = shellService.applyGameDownscale(pkg, 0.7f);
+                    if ("game_apply_launch".equals(action) && isShellSuccess(result)) {
+                        final String packageToLaunch = pkg;
+                        handler.post(() -> {
+                            boolean launched = launchGame(packageToLaunch);
+                            if (launched) {
+                                Toast.makeText(this, "Modo Massinha solicitado. Confira as opções de gráfico dentro do jogo.", Toast.LENGTH_LONG).show();
+                            } else {
+                                Toast.makeText(this, "A intervenção foi solicitada, mas o jogo não pôde ser aberto.", Toast.LENGTH_LONG).show();
+                            }
+                        });
+                    }
                 } else if ("game_restore".equals(action)) {
                     String pkg = argument;
                     String key = "game_overlay_original_" + pkg;
