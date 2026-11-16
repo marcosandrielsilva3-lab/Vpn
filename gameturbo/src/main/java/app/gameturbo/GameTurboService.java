@@ -46,6 +46,7 @@ public class GameTurboService extends Service {
     private WindowManager.LayoutParams overlayParams;
     private boolean overlayActive = false;
     private boolean timerActive = false;
+    private boolean shuttingDown = false;
     private long timerEndWallClock = 0L;
 
     private final Runnable timerTick = new Runnable() {
@@ -156,7 +157,7 @@ public class GameTurboService extends Service {
                     float dy = event.getRawY() - down[1];
                     if (Math.abs(dx) > dp(5) || Math.abs(dy) > dp(5)) moved[0] = true;
                     if (moved[0]) {
-                        overlayParams.x = Math.max(0, original[0] + (int) dx);
+                        overlayParams.x = Math.max(0, original[0] - (int) dx);
                         overlayParams.y = Math.max(0, original[1] + (int) dy);
                         try { windowManager.updateViewLayout(overlayRoot, overlayParams); } catch (Exception ignored) {}
                     }
@@ -202,7 +203,8 @@ public class GameTurboService extends Service {
     }
 
     private void removeOverlay() {
-        if (overlayRoot != null) {
+        boolean hadOverlay = overlayRoot != null;
+        if (hadOverlay) {
             try { windowManager.removeView(overlayRoot); } catch (Exception ignored) {}
         }
         overlayRoot = null;
@@ -210,7 +212,9 @@ public class GameTurboService extends Service {
         overlayParams = null;
         overlayActive = false;
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("overlay_on", false).apply();
-        updateForegroundNotification(timerActive ? "Cronômetro de sessão ativo." : "Game Turbo pronto.");
+        if (hadOverlay && !shuttingDown) {
+            updateForegroundNotification(timerActive ? "Cronômetro de sessão ativo." : "Game Turbo pronto.");
+        }
     }
 
     private void startTimer(int minutes) {
@@ -344,6 +348,7 @@ public class GameTurboService extends Service {
 
     @Override
     public void onDestroy() {
+        shuttingDown = true;
         handler.removeCallbacks(timerTick);
         removeOverlay();
         super.onDestroy();
