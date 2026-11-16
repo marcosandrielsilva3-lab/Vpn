@@ -15,6 +15,8 @@ import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Environment;
 import android.os.storage.StorageManager;
+import android.system.OsConstants;
+import android.app.AlertDialog;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -133,26 +135,29 @@ public class MainActivity extends Activity {
         addSpace(page, 14);
         LinearLayout optimizationCard = card(page, "OTIMIZAÇÃO E LIMPEZA");
         TextView optimizationHint = makeText(
-            "Ferramentas reais: limpeza de cache, gerenciamento oficial de armazenamento e atalhos para controlar apps. A limpeza global é executada pelo Android e pode pedir uma permissão especial.",
+            "A limpeza em massa é feita pelo Android. Ela alcança os caches externos dos apps, exige autorização especial e confirmação do sistema; não apaga todos os caches privados internos. A resolução, quando disponível, é alterada nas configurações oficiais do aparelho.",
             13, 0xFF9EACC6, false
         );
         optimizationCard.addView(optimizationHint);
         cacheStatusText = makeText("", 14, 0xFFE5ECF8, false);
         optimizationCard.addView(cacheStatusText);
-        Button clearTurboCache = makeButton("Limpar cache do Game Turbo");
-        Button clearAllCache = makeButton("Solicitar limpeza de cache dos apps");
+        Button clearTurboCache = makeButton("Limpar cache do próprio Game Turbo");
+        Button clearAllCache = makeButton("Limpar caches externos dos outros apps");
         Button manageStorage = makeButton("Gerenciar armazenamento");
         Button manageApps = makeButton("Gerenciar apps / segundo plano");
+        Button displaySettings = makeButton("Abrir resolução e tela");
         Button batterySettings = makeButton("Abrir configurações de bateria");
         optimizationCard.addView(clearTurboCache);
         optimizationCard.addView(clearAllCache);
         optimizationCard.addView(manageStorage);
         optimizationCard.addView(manageApps);
+        optimizationCard.addView(displaySettings);
         optimizationCard.addView(batterySettings);
         clearTurboCache.setOnClickListener(v -> clearOwnCache());
         clearAllCache.setOnClickListener(v -> requestSystemCacheCleanup());
         manageStorage.setOnClickListener(v -> openSystemStorageManager());
         manageApps.setOnClickListener(v -> openAppManagement());
+        displaySettings.setOnClickListener(v -> openDisplaySettings());
         batterySettings.setOnClickListener(v -> openBatterySettings());
         refreshCacheStatus();
 
@@ -227,6 +232,12 @@ public class MainActivity extends Activity {
         profileText.setText("Perfil atual: " + selectedProfile + "\n" + advice);
     }
 
+    private String getResolutionText() {
+        android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
+        return metrics.widthPixels + " × " + metrics.heightPixels + " px";
+    }
+
     private void refreshStats() {
         if (statsText == null) return;
         ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
@@ -297,13 +308,15 @@ public class MainActivity extends Activity {
             if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
                 launchSystemCacheCleanup();
             } else {
-                Toast.makeText(this, "Sem essa autorização, use a limpeza de armazenamento do Android ou limpe os caches individualmente.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Acesso especial não concedido. A limpeza em massa não foi executada.", Toast.LENGTH_LONG).show();
             }
         } else if (requestCode == REQUEST_CLEAR_CACHE) {
             if (resultCode == RESULT_OK) {
-                Toast.makeText(this, "O Android concluiu a solicitação de limpeza de cache.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "O Android confirmou a limpeza dos caches externos dos aplicativos.", Toast.LENGTH_LONG).show();
+            } else if (Build.VERSION.SDK_INT >= 30 && resultCode == OsConstants.EIO) {
+                Toast.makeText(this, "O Android encontrou um erro ao limpar os caches. Nada foi informado como concluído.", Toast.LENGTH_LONG).show();
             } else {
-                Toast.makeText(this, "A limpeza global foi cancelada ou não foi concluída.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Limpeza cancelada. O Android não confirmou que os caches foram apagados.", Toast.LENGTH_LONG).show();
             }
         } else if (requestCode == REQUEST_MANAGE_STORAGE) {
             Toast.makeText(this, resultCode == RESULT_OK ? "Armazenamento atualizado." : "Gerenciamento de armazenamento fechado.", Toast.LENGTH_SHORT).show();
@@ -312,27 +325,43 @@ public class MainActivity extends Activity {
     }
 
     private void requestSystemCacheCleanup() {
-        if (Build.VERSION.SDK_INT >= 30) {
-            if (!Environment.isExternalStorageManager()) {
-                try {
-                    Intent access = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-                    access.setData(Uri.parse("package:" + getPackageName()));
-                    startActivityForResult(access, REQUEST_CACHE_PERMISSION);
-                } catch (Exception firstError) {
-                    try {
-                        startActivityForResult(
-                            new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
-                            REQUEST_CACHE_PERMISSION
-                        );
-                    } catch (Exception secondError) {
-                        Toast.makeText(this, "O Android não disponibilizou a tela dessa autorização.", Toast.LENGTH_LONG).show();
-                    }
-                }
-            } else {
-                launchSystemCacheCleanup();
+        if (Build.VERSION.SDK_INT < 30) {
+            new AlertDialog.Builder(this)
+                .setTitle("Limpeza em massa indisponível")
+                .setMessage("Esta versão do Android não oferece ao Game Turbo a solicitação oficial para limpar os caches dos outros aplicativos. Abra as informações de cada app nas Configurações para limpar manualmente.")
+                .setPositiveButton("Abrir aplicativos", (dialog, which) -> openAppManagement())
+                .setNegativeButton("Fechar", null)
+                .show();
+            return;
+        }
+
+        if (Environment.isExternalStorageManager()) {
+            launchSystemCacheCleanup();
+            return;
+        }
+
+        new AlertDialog.Builder(this)
+            .setTitle("Autorização especial do Android")
+            .setMessage("Para pedir ao Android a limpeza dos caches externos de todos os aplicativos, ele exige o acesso especial “Gerenciar todos os arquivos”. Essa permissão é ampla. O Game Turbo só a usa para chamar a tela oficial de limpeza; não acessa os dados privados internos dos outros apps. Depois de autorizar, o Android ainda mostrará uma confirmação. Quer abrir essa tela?")
+            .setPositiveButton("Abrir autorização", (dialog, which) -> openCachePermissionSettings())
+            .setNegativeButton("Cancelar", null)
+            .show();
+    }
+
+    private void openCachePermissionSettings() {
+        try {
+            Intent access = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+            access.setData(Uri.parse("package:" + getPackageName()));
+            startActivityForResult(access, REQUEST_CACHE_PERMISSION);
+        } catch (Exception firstError) {
+            try {
+                startActivityForResult(
+                    new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
+                    REQUEST_CACHE_PERMISSION
+                );
+            } catch (Exception secondError) {
+                Toast.makeText(this, "O Android não disponibilizou a tela dessa autorização.", Toast.LENGTH_LONG).show();
             }
-        } else {
-            openSystemStorageManager();
         }
     }
 
@@ -342,10 +371,12 @@ public class MainActivity extends Activity {
             return;
         }
         try {
-            startActivityForResult(
-                new Intent(StorageManager.ACTION_CLEAR_APP_CACHE),
-                REQUEST_CLEAR_CACHE
-            );
+            Intent clearIntent = new Intent(StorageManager.ACTION_CLEAR_APP_CACHE);
+            if (clearIntent.resolveActivity(getPackageManager()) == null) {
+                Toast.makeText(this, "Este Android não disponibilizou a tela de limpeza em massa.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            startActivityForResult(clearIntent, REQUEST_CLEAR_CACHE);
         } catch (Exception error) {
             Toast.makeText(this, "Não foi possível abrir a limpeza de cache do sistema.", Toast.LENGTH_LONG).show();
             openSystemStorageManager();
@@ -375,6 +406,18 @@ public class MainActivity extends Activity {
             startActivity(new Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS));
         } catch (Exception error) {
             startActivity(new Intent(Settings.ACTION_SETTINGS));
+        }
+    }
+
+    private void openDisplaySettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_DISPLAY_SETTINGS));
+        } catch (Exception error) {
+            try {
+                startActivity(new Intent(Settings.ACTION_SETTINGS));
+            } catch (Exception ignored) {
+                Toast.makeText(this, "Configurações de tela indisponíveis.", Toast.LENGTH_LONG).show();
+            }
         }
     }
 
