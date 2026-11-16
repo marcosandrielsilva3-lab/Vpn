@@ -13,8 +13,14 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
-import android.os.Environment;
 import android.os.storage.StorageManager;
+import android.content.ComponentName;
+import android.content.ServiceConnection;
+import android.os.IBinder;
+import android.os.RemoteException;
+import rikka.shizuku.Shizuku;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import android.system.OsConstants;
 import android.app.AlertDialog;
 import android.os.Bundle;
@@ -38,8 +44,6 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private static final int REQUEST_OVERLAY = 201;
     private static final int REQUEST_NOTIFICATIONS = 202;
-    private static final int REQUEST_CACHE_PERMISSION = 203;
-    private static final int REQUEST_CLEAR_CACHE = 204;
     private static final int REQUEST_MANAGE_STORAGE = 205;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -48,10 +52,57 @@ public class MainActivity extends Activity {
     private TextView profileText;
     private TextView timerText;
     private TextView cacheStatusText;
+    private TextView shizukuStatusText;
+    private TextView advancedResultText;
+    private IGameTurboShell shellService;
+    private boolean shellServiceBinding = false;
+    private String pendingShellAction = null;
+    private String pendingShellArgument = null;
+    private final ExecutorService shellExecutor = Executors.newSingleThreadExecutor();
+    private static final int REQUEST_SHIZUKU_PERMISSION = 501;
     private EditText minutesInput;
     private String selectedProfile = "Roblox";
     private String pendingAction = null;
     private int pendingMinutes = 0;
+
+    private final Shizuku.OnBinderReceivedListener binderReceivedListener =
+        () -> runOnUiThread(this::refreshShizukuStatus);
+    private final Shizuku.OnBinderDeadListener binderDeadListener =
+        () -> runOnUiThread(() -> {
+            shellService = null;
+            shellServiceBinding = false;
+            refreshShizukuStatus();
+        });
+    private final Shizuku.OnRequestPermissionResultListener shizukuPermissionListener =
+        (requestCode, grantResult) -> {
+            if (requestCode == REQUEST_SHIZUKU_PERMISSION) {
+                if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                    bindShellService();
+                } else {
+                    Toast.makeText(this, "A permissão do Shizuku foi negada.", Toast.LENGTH_LONG).show();
+                    refreshShizukuStatus();
+                }
+            }
+        };
+
+    private final ServiceConnection shellServiceConnection = new ServiceConnection() {
+        @Override public void onServiceConnected(ComponentName name, IBinder binder) {
+            shellService = IGameTurboShell.Stub.asInterface(binder);
+            shellServiceBinding = false;
+            refreshShizukuStatus();
+            String action = pendingShellAction;
+            String argument = pendingShellArgument;
+            pendingShellAction = null;
+            pendingShellArgument = null;
+            if (action != null) executeShellAction(action, argument);
+        }
+
+        @Override public void onServiceDisconnected(ComponentName name) {
+            shellService = null;
+            shellServiceBinding = false;
+            refreshShizukuStatus();
+        }
+    };
 
     private final Runnable refreshTask = new Runnable() {
         @Override public void run() {
@@ -64,6 +115,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Shizuku.addBinderReceivedListenerSticky(binderReceivedListener);
+        Shizuku.addBinderDeadListener(binderDeadListener);
+        Shizuku.addRequestPermissionResultListener(shizukuPermissionListener);
         selectedProfile = getPreferences(MODE_PRIVATE).getString("profile", "Roblox");
         buildInterface();
         refreshStats();
@@ -76,8 +130,18 @@ public class MainActivity extends Activity {
         refreshOverlayStatus();
         refreshTimer();
         refreshCacheStatus();
+        refreshShizukuStatus();
         handler.removeCallbacks(refreshTask);
         handler.post(refreshTask);
+    }
+
+    @Override
+    protected void onDestroy() {
+        Shizuku.removeBinderReceivedListener(binderReceivedListener);
+        Shizuku.removeBinderDeadListener(binderDeadListener);
+        Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener);
+        shellExecutor.shutdownNow();
+        super.onDestroy();
     }
 
     @Override
@@ -133,16 +197,33 @@ public class MainActivity extends Activity {
         launchFreeFire.setOnClickListener(v -> launchFreeFire());
 
         addSpace(page, 14);
+        LinearLayout advancedCard = card(page, "CONTROLE AVANÇADO (SHIZUKU)");
+        shizukuStatusText = makeText("Shizuku não conectado.", 14, 0xFFE5ECF8, false);
+        advancedCard.addView(shizukuStatusText);
+        TextView shizukuHint = makeText(
+            "Para limpar caches de vários apps e aplicar redução real de resolução, instale o Shizuku, inicie-o por Depuração sem fio no Android 11+ e autorize o Game Turbo. Não precisa de root; a autorização é concedida pelo próprio Shizuku.",
+            13, 0xFF9EACC6, false
+        );
+        advancedCard.addView(shizukuHint);
+        Button installShizuku = makeButton("Instalar / abrir Shizuku");
+        Button connectShizuku = makeButton("Conectar e autorizar");
+        advancedCard.addView(installShizuku);
+        advancedCard.addView(connectShizuku);
+        installShizuku.setOnClickListener(v -> openShizukuApp());
+        connectShizuku.setOnClickListener(v -> connectShizuku());
+        refreshShizukuStatus();
+
+        addSpace(page, 14);
         LinearLayout optimizationCard = card(page, "OTIMIZAÇÃO E LIMPEZA");
         TextView optimizationHint = makeText(
-            "A limpeza em massa é feita pelo Android. Ela alcança os caches externos dos apps, exige autorização especial e confirmação do sistema; não apaga todos os caches privados internos. A resolução, quando disponível, é alterada nas configurações oficiais do aparelho.",
+            "A limpeza em massa usa o Package Manager pelo Shizuku para solicitar ao Android a remoção dos caches dos aplicativos, sem apagar os dados pessoais. É possível ajustar a resolução geral e, em aparelhos compatíveis, a renderização por jogo.",
             13, 0xFF9EACC6, false
         );
         optimizationCard.addView(optimizationHint);
         cacheStatusText = makeText("", 14, 0xFFE5ECF8, false);
         optimizationCard.addView(cacheStatusText);
         Button clearTurboCache = makeButton("Limpar cache do próprio Game Turbo");
-        Button clearAllCache = makeButton("Limpar caches externos dos outros apps");
+        Button clearAllCache = makeButton("Limpar cache dos aplicativos");
         Button manageStorage = makeButton("Gerenciar armazenamento");
         Button manageApps = makeButton("Gerenciar apps / segundo plano");
         Button displaySettings = makeButton("Abrir resolução e tela");
@@ -154,12 +235,52 @@ public class MainActivity extends Activity {
         optimizationCard.addView(displaySettings);
         optimizationCard.addView(batterySettings);
         clearTurboCache.setOnClickListener(v -> clearOwnCache());
-        clearAllCache.setOnClickListener(v -> requestSystemCacheCleanup());
+        clearAllCache.setOnClickListener(v -> requestShellAction("trim", null));
         manageStorage.setOnClickListener(v -> openSystemStorageManager());
         manageApps.setOnClickListener(v -> openAppManagement());
         displaySettings.setOnClickListener(v -> openDisplaySettings());
         batterySettings.setOnClickListener(v -> openBatterySettings());
         refreshCacheStatus();
+
+        addSpace(page, 14);
+        LinearLayout resolutionCard = card(page, "RESOLUÇÃO GERAL DA TELA");
+        TextView resolutionHint = makeText(
+            "Ajusta o tamanho lógico da tela para todos os aplicativos. A imagem fica mais borrada e a interface pode ficar menor. Use Restaurar para voltar ao estado anterior.",
+            13, 0xFF9EACC6, false
+        );
+        resolutionCard.addView(resolutionHint);
+        Button resolution80 = makeButton("Reduzir resolução para 80%");
+        Button resolution70 = makeButton("Reduzir resolução para 70%");
+        Button resolutionReset = makeButton("Restaurar resolução original");
+        resolutionCard.addView(resolution80);
+        resolutionCard.addView(resolution70);
+        resolutionCard.addView(resolutionReset);
+        resolution80.setOnClickListener(v -> requestShellAction("display", "0.8"));
+        resolution70.setOnClickListener(v -> requestShellAction("display", "0.7"));
+        resolutionReset.setOnClickListener(v -> requestShellAction("display_reset", null));
+
+        addSpace(page, 14);
+        LinearLayout gameScaleCard = card(page, "REDUZIR RESOLUÇÃO DE RENDERIZAÇÃO DOS JOGOS");
+        TextView gameScaleHint = makeText(
+            "O Android pode reduzir o buffer gráfico para 70% em jogos compatíveis (Android 13+ e suporte do fabricante/jogo). Reinicie o jogo após aplicar. Isso reduz a resolução renderizada, mas não substitui os arquivos de textura.",
+            13, 0xFF9EACC6, false
+        );
+        gameScaleCard.addView(gameScaleHint);
+        Button robloxDown = makeButton("Roblox: reduzir renderização (70%)");
+        Button robloxRestore = makeButton("Roblox: restaurar padrão");
+        Button freeFireDown = makeButton("Free Fire: reduzir renderização (70%)");
+        Button freeFireRestore = makeButton("Free Fire: restaurar padrão");
+        gameScaleCard.addView(robloxDown);
+        gameScaleCard.addView(robloxRestore);
+        gameScaleCard.addView(freeFireDown);
+        gameScaleCard.addView(freeFireRestore);
+        robloxDown.setOnClickListener(v -> requestShellAction("game_apply", "com.roblox.client"));
+        robloxRestore.setOnClickListener(v -> requestShellAction("game_restore", "com.roblox.client"));
+        freeFireDown.setOnClickListener(v -> requestShellAction("game_apply", "com.dts.freefireth"));
+        freeFireRestore.setOnClickListener(v -> requestShellAction("game_restore", "com.dts.freefireth"));
+
+        advancedResultText = makeText("Nenhuma operação avançada executada.", 13, 0xFFE5ECF8, false);
+        gameScaleCard.addView(advancedResultText);
 
         addSpace(page, 14);
         LinearLayout overlayCard = card(page, "BOLINHA FLUTUANTE");
@@ -209,7 +330,7 @@ public class MainActivity extends Activity {
 
         addSpace(page, 18);
         TextView limitation = makeText(
-            "Importante: Android não permite que um app comum aumente diretamente o FPS, faça overclock ou force a GPU de outros jogos. Este app oferece atalhos, dados reais do aparelho, cronômetro e janela flutuante; não promete ganho falso de desempenho.",
+            "Importante: o controle avançado depende do Shizuku ativo. A redução por jogo só funciona se o Android e o jogo aceitarem a intervenção; o Game Turbo não troca arquivos de textura dos jogos. Use os botões Restaurar para desfazer as alterações.",
             12, 0xFF8F9DB6, false
         );
         page.addView(limitation);
@@ -304,78 +425,203 @@ public class MainActivity extends Activity {
             } else {
                 Toast.makeText(this, "A permissão de sobreposição não foi concedida.", Toast.LENGTH_LONG).show();
             }
-        } else if (requestCode == REQUEST_CACHE_PERMISSION) {
-            if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
-                launchSystemCacheCleanup();
-            } else {
-                Toast.makeText(this, "Acesso especial não concedido. A limpeza em massa não foi executada.", Toast.LENGTH_LONG).show();
-            }
-        } else if (requestCode == REQUEST_CLEAR_CACHE) {
-            if (resultCode == RESULT_OK) {
-                Toast.makeText(this, "O Android confirmou a limpeza dos caches externos dos aplicativos.", Toast.LENGTH_LONG).show();
-            } else if (Build.VERSION.SDK_INT >= 30 && resultCode == OsConstants.EIO) {
-                Toast.makeText(this, "O Android encontrou um erro ao limpar os caches. Nada foi informado como concluído.", Toast.LENGTH_LONG).show();
-            } else {
-                Toast.makeText(this, "Limpeza cancelada. O Android não confirmou que os caches foram apagados.", Toast.LENGTH_LONG).show();
-            }
         } else if (requestCode == REQUEST_MANAGE_STORAGE) {
             Toast.makeText(this, resultCode == RESULT_OK ? "Armazenamento atualizado." : "Gerenciamento de armazenamento fechado.", Toast.LENGTH_SHORT).show();
         }
         refreshCacheStatus();
     }
 
-    private void requestSystemCacheCleanup() {
-        if (Build.VERSION.SDK_INT < 30) {
+    private void openShizukuApp() {
+        Intent launch = getPackageManager().getLaunchIntentForPackage("moe.shizuku.privileged.api");
+        if (launch != null) {
+            startActivity(launch);
+            return;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")));
+        } catch (Exception error) {
+            Toast.makeText(this, "Não foi possível abrir a página do Shizuku.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void connectShizuku() {
+        if (!Shizuku.pingBinder()) {
             new AlertDialog.Builder(this)
-                .setTitle("Limpeza em massa indisponível")
-                .setMessage("Esta versão do Android não oferece ao Game Turbo a solicitação oficial para limpar os caches dos outros aplicativos. Abra as informações de cada app nas Configurações para limpar manualmente.")
-                .setPositiveButton("Abrir aplicativos", (dialog, which) -> openAppManagement())
+                .setTitle("Shizuku não está iniciado")
+                .setMessage("Instale e abra o Shizuku. No Android 11 ou superior, inicie o serviço usando Depuração sem fio. Depois volte ao Game Turbo e toque em Conectar e autorizar.")
+                .setPositiveButton("Abrir Shizuku", (dialog, which) -> openShizukuApp())
                 .setNegativeButton("Fechar", null)
                 .show();
             return;
         }
-
-        if (Environment.isExternalStorageManager()) {
-            launchSystemCacheCleanup();
+        if (Shizuku.isPreV11()) {
+            Toast.makeText(this, "Atualize o Shizuku para uma versão recente.", Toast.LENGTH_LONG).show();
             return;
         }
-
-        new AlertDialog.Builder(this)
-            .setTitle("Autorização especial do Android")
-            .setMessage("Para pedir ao Android a limpeza dos caches externos de todos os aplicativos, ele exige o acesso especial “Gerenciar todos os arquivos”. Essa permissão é ampla. O Game Turbo só a usa para chamar a tela oficial de limpeza; não acessa os dados privados internos dos outros apps. Depois de autorizar, o Android ainda mostrará uma confirmação. Quer abrir essa tela?")
-            .setPositiveButton("Abrir autorização", (dialog, which) -> openCachePermissionSettings())
-            .setNegativeButton("Cancelar", null)
-            .show();
+        try {
+            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                bindShellService();
+            } else {
+                Shizuku.requestPermission(REQUEST_SHIZUKU_PERMISSION);
+            }
+        } catch (Throwable error) {
+            Toast.makeText(this, "Falha ao verificar a autorização do Shizuku: " + error.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
-    private void openCachePermissionSettings() {
+    private void bindShellService() {
+        if (shellService != null || shellServiceBinding) return;
         try {
-            Intent access = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-            access.setData(Uri.parse("package:" + getPackageName()));
-            startActivityForResult(access, REQUEST_CACHE_PERMISSION);
-        } catch (Exception firstError) {
+            Shizuku.UserServiceArgs args = new Shizuku.UserServiceArgs(
+                new ComponentName(getPackageName(), GameTurboShellService.class.getName())
+            ).tag("gameturbo-shell").daemon(false).processNameSuffix("shell").version(1);
+            shellServiceBinding = true;
+            Shizuku.bindUserService(args, shellServiceConnection);
+            Toast.makeText(this, "Conectando ao controle avançado…", Toast.LENGTH_SHORT).show();
+        } catch (Throwable error) {
+            shellServiceBinding = false;
+            Toast.makeText(this, "Não foi possível conectar ao serviço avançado: " + error.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void refreshShizukuStatus() {
+        if (shizukuStatusText == null) return;
+        if (!Shizuku.pingBinder()) {
+            shizukuStatusText.setText("Shizuku: não iniciado ou desconectado.");
+        } else {
             try {
-                startActivityForResult(
-                    new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
-                    REQUEST_CACHE_PERMISSION
+                int uid = Shizuku.getUid();
+                String identity = uid == 0 ? "root" : (uid == 2000 ? "ADB / shell" : "UID " + uid);
+                boolean granted = Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
+                shizukuStatusText.setText(
+                    "Shizuku conectado (" + identity + ").\nAutorização do Game Turbo: " +
+                    (granted ? "concedida" : "pendente") +
+                    (shellService != null ? "\nServiço de comandos: pronto" : "")
                 );
-            } catch (Exception secondError) {
-                Toast.makeText(this, "O Android não disponibilizou a tela dessa autorização.", Toast.LENGTH_LONG).show();
+            } catch (Throwable error) {
+                shizukuStatusText.setText("Shizuku detectado, mas ainda não foi autorizado.");
             }
         }
+        refreshCacheStatus();
     }
 
-    private void launchSystemCacheCleanup() {
-        if (Build.VERSION.SDK_INT < 30) {
-            openSystemStorageManager();
+    private void requestShellAction(String action, String argument) {
+        if (!Shizuku.pingBinder()) {
+            new AlertDialog.Builder(this)
+                .setTitle("Controle avançado necessário")
+                .setMessage("Esta função precisa do Shizuku ativo. Não é root: o Shizuku fornece acesso ADB/shell autorizado pelo próprio Android. Instale-o e inicie-o pela Depuração sem fio no Android 11+.")
+                .setPositiveButton("Abrir Shizuku", (dialog, which) -> openShizukuApp())
+                .setNegativeButton("Cancelar", null)
+                .show();
+            return;
+        }
+        if (Shizuku.isPreV11()) {
+            Toast.makeText(this, "A versão do Shizuku é antiga demais. Atualize o aplicativo Shizuku.", Toast.LENGTH_LONG).show();
             return;
         }
         try {
-            Intent clearIntent = new Intent(StorageManager.ACTION_CLEAR_APP_CACHE);
-            startActivityForResult(clearIntent, REQUEST_CLEAR_CACHE);
-        } catch (Exception error) {
-            Toast.makeText(this, "O Android não conseguiu abrir a tela oficial de limpeza. Nenhum cache foi informado como apagado.", Toast.LENGTH_LONG).show();
+            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                pendingShellAction = action;
+                pendingShellArgument = argument;
+                Shizuku.requestPermission(REQUEST_SHIZUKU_PERMISSION);
+                return;
+            }
+            pendingShellAction = action;
+            pendingShellArgument = argument;
+            bindShellService();
+            if (shellService != null) {
+                String pending = pendingShellAction;
+                String pendingArg = pendingShellArgument;
+                pendingShellAction = null;
+                pendingShellArgument = null;
+                executeShellAction(pending, pendingArg);
+            }
+        } catch (Throwable error) {
+            Toast.makeText(this, "Não foi possível pedir a autorização do Shizuku: " + error.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void executeShellAction(String action, String argument) {
+        if (shellService == null || action == null) return;
+        shellExecutor.execute(() -> {
+            String result;
+            try {
+                if ("trim".equals(action)) {
+                    result = shellService.trimAllCaches();
+                } else if ("display".equals(action)) {
+                    String saved = getPreferences(MODE_PRIVATE).getString("original_display_override", null);
+                    if (saved == null) {
+                        String current = shellService.getDisplaySize();
+                        if (!isShellSuccess(current)) {
+                            result = current;
+                            postShellResult(result);
+                            return;
+                        }
+                        saved = shellOutput(current);
+                        getPreferences(MODE_PRIVATE).edit().putString("original_display_override", saved).apply();
+                    }
+                    result = shellService.applyDisplayScale(Float.parseFloat(argument));
+                } else if ("display_reset".equals(action)) {
+                    String saved = getPreferences(MODE_PRIVATE).getString("original_display_override", null);
+                    if (saved == null) {
+                        result = "A resolução ainda não foi alterada pelo Game Turbo.";
+                    } else {
+                        result = shellService.restoreDisplaySize(saved);
+                        if (isShellSuccess(result)) getPreferences(MODE_PRIVATE).edit().remove("original_display_override").apply();
+                    }
+                } else if ("game_apply".equals(action)) {
+                    String pkg = argument;
+                    String key = "game_overlay_original_" + pkg;
+                    if (!getPreferences(MODE_PRIVATE).contains(key)) {
+                        String old = shellService.getGameOverlayConfig(pkg);
+                        if (!isShellSuccess(old)) {
+                            result = old;
+                            postShellResult(result);
+                            return;
+                        }
+                        String oldValue = shellOutput(old).trim();
+                        getPreferences(MODE_PRIVATE).edit().putString(key, oldValue.isEmpty() ? "__NONE__" : oldValue).apply();
+                    }
+                    result = shellService.applyGameDownscale(pkg, 0.7f);
+                } else if ("game_restore".equals(action)) {
+                    String pkg = argument;
+                    String key = "game_overlay_original_" + pkg;
+                    String old = getPreferences(MODE_PRIVATE).getString(key, null);
+                    if (old == null) {
+                        result = "Não há alteração do Game Turbo salva para restaurar neste jogo.";
+                    } else {
+                        result = shellService.restoreGameDownscale(pkg, old);
+                        if (isShellSuccess(result)) getPreferences(MODE_PRIVATE).edit().remove(key).apply();
+                    }
+                } else {
+                    result = "Ação desconhecida.";
+                }
+            } catch (Throwable error) {
+                result = "Erro: " + error.getClass().getSimpleName() + " — " + error.getMessage();
+            }
+            postShellResult(result);
+        });
+    }
+
+    private boolean isShellSuccess(String result) {
+        return result != null && result.startsWith("EXIT:0");
+    }
+
+    private String shellOutput(String result) {
+        if (result == null) return "";
+        int newline = result.indexOf('\n');
+        return newline >= 0 ? result.substring(newline + 1) : "";
+    }
+
+    private void postShellResult(String result) {
+        handler.post(() -> {
+            if (advancedResultText != null) {
+                advancedResultText.setText(result == null ? "Sem retorno do Android." : result);
+            }
+            boolean ok = isShellSuccess(result);
+            Toast.makeText(this, ok ? "Comando do Android executado." : "O Android não confirmou a operação.", Toast.LENGTH_LONG).show();
+            refreshShizukuStatus();
+        });
     }
 
     private void openSystemStorageManager() {
@@ -436,17 +682,10 @@ public class MainActivity extends Activity {
 
     private void refreshCacheStatus() {
         if (cacheStatusText == null) return;
-        String bulkStatus;
-        if (Build.VERSION.SDK_INT < 30) {
-            bulkStatus = "Limpeza em massa dos caches externos: não suportada por esta versão do Android";
-        } else {
-            bulkStatus = "Acesso especial para limpeza em massa: " +
-                (Environment.isExternalStorageManager() ? "autorizado" : "ainda não autorizado");
-        }
         cacheStatusText.setText(
             "Cache temporário do Game Turbo: " + formatBytes(getOwnCacheSize()) +
-            "\n" + bulkStatus +
-            "\nA limpeza em massa atinge somente diretórios de cache externo; o Android não libera os caches privados internos dos outros apps."
+            "\nLimpeza dos outros apps: " +
+            (Shizuku.pingBinder() && shellService != null ? "controle avançado conectado" : "precisa do Shizuku ativo e autorizado")
         );
     }
 

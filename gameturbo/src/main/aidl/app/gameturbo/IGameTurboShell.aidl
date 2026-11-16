@@ -1,0 +1,11 @@
+package app.gameturbo;
+
+interface IGameTurboShell {
+    String trimAllCaches();
+    String getDisplaySize();
+    String applyDisplayScale(float scale);
+    String restoreDisplaySize(String originalOutput);
+    String getGameOverlayConfig(String packageName);
+    String applyGameDownscale(String packageName, float scale);
+    String restoreGameDownscale(String packageName, String originalConfig);
+}

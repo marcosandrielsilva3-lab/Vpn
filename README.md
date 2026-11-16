@@ -14,3 +14,12 @@ O APK será disponibilizado após a compilação automática do projeto.
 
 ### Diagnóstico da limpeza (1.2.1)
 O painel exibe se o acesso especial está autorizado. A tentativa de limpeza só é considerada concluída quando a atividade do Android retorna RESULT_OK; cancelamento e EIO são informados separadamente. A ação pública do Android limpa diretórios de cache externo dos apps, não os diretórios privados internos.
+
+
+## Game Turbo 1.3 — Shizuku / ADB shell
+- Usa Shizuku como ponte de autorização ADB/shell (sem root).
+- `pm trim-caches 999G internal` solicita ao Package Manager a limpeza de caches descartáveis pelo sistema, sem apagar dados privados de apps.
+- `wm size` permite reduzir a resolução lógica geral da tela e restaurá-la.
+- Android 13+ pode aplicar `device_config game_overlay` com downscale 70% e Game Mode PERFORMANCE em Roblox e Free Fire compatíveis; reinicie o jogo para testar.
+- A resolução de renderização não substitui a qualidade/arquivos de textura do jogo. Cada jogo/OEM pode não aceitar a intervenção.
+- Requer Shizuku instalado, iniciado e autorizado pelo usuário; Android 11+ permite iniciar sem PC usando Depuração sem fio.
