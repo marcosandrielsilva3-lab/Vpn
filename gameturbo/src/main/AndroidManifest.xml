@@ -18,7 +18,7 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
-            android:name=".MainActivity"
+            android:name="app.gameturbo.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -27,7 +27,7 @@
         </activity>
 
         <service
-            android:name=".GameTurboService"
+            android:name="app.gameturbo.GameTurboService"
             android:exported="false" />
     </application>
 </manifest>
