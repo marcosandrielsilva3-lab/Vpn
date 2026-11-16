@@ -372,14 +372,9 @@ public class MainActivity extends Activity {
         }
         try {
             Intent clearIntent = new Intent(StorageManager.ACTION_CLEAR_APP_CACHE);
-            if (clearIntent.resolveActivity(getPackageManager()) == null) {
-                Toast.makeText(this, "Este Android não disponibilizou a tela de limpeza em massa.", Toast.LENGTH_LONG).show();
-                return;
-            }
             startActivityForResult(clearIntent, REQUEST_CLEAR_CACHE);
         } catch (Exception error) {
-            Toast.makeText(this, "Não foi possível abrir a limpeza de cache do sistema.", Toast.LENGTH_LONG).show();
-            openSystemStorageManager();
+            Toast.makeText(this, "O Android não conseguiu abrir a tela oficial de limpeza. Nenhum cache foi informado como apagado.", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -441,7 +436,18 @@ public class MainActivity extends Activity {
 
     private void refreshCacheStatus() {
         if (cacheStatusText == null) return;
-        cacheStatusText.setText("Cache temporário do Game Turbo: " + formatBytes(getOwnCacheSize()));
+        String bulkStatus;
+        if (Build.VERSION.SDK_INT < 30) {
+            bulkStatus = "Limpeza em massa dos caches externos: não suportada por esta versão do Android";
+        } else {
+            bulkStatus = "Acesso especial para limpeza em massa: " +
+                (Environment.isExternalStorageManager() ? "autorizado" : "ainda não autorizado");
+        }
+        cacheStatusText.setText(
+            "Cache temporário do Game Turbo: " + formatBytes(getOwnCacheSize()) +
+            "\n" + bulkStatus +
+            "\nA limpeza em massa atinge somente diretórios de cache externo; o Android não libera os caches privados internos dos outros apps."
+        );
     }
 
     private long getOwnCacheSize() {
