@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "VPNLocalDemo"
-include(":app")
+include(":app", ":gameturbo")

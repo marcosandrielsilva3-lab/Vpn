@@ -20,11 +20,17 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - name: Build debug APK
-        run: gradle assembleDebug
-      - name: Upload APK
+      - name: Build both Android APKs
+        run: gradle :app:assembleDebug :gameturbo:assembleDebug
+      - name: Upload VPN APK
         uses: actions/upload-artifact@v4
         with:
           name: VPNLocalDemo-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Upload Game Turbo APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameTurbo-APK
+          path: gameturbo/build/outputs/apk/debug/gameturbo-debug.apk
           if-no-files-found: error
