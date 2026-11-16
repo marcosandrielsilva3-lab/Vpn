@@ -12,6 +12,7 @@ import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
+import java.io.File;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -122,6 +123,8 @@ public class GameTurboService extends Service {
         addOverlayAction("Abrir Game Turbo", () -> openMainApp());
         addOverlayAction("Abrir Roblox", () -> launchPackage("com.roblox.client"));
         addOverlayAction("Abrir Free Fire", () -> launchFreeFire());
+        addOverlayAction("Limpeza rápida do Turbo", () -> clearOwnCache());
+        addOverlayAction("Gerenciar apps", () -> openAppManagement());
         addOverlayAction("Fechar bolinha", () -> {
             removeOverlay();
             stopIfIdle();
@@ -186,6 +189,54 @@ public class GameTurboService extends Service {
             getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("overlay_on", false).apply();
             Toast.makeText(this, "Não foi possível mostrar a janela flutuante.", Toast.LENGTH_LONG).show();
             stopIfIdle();
+        }
+    }
+
+    private void clearOwnCache() {
+        long before = directorySize(getCacheDir());
+        deleteDirectoryContents(getCacheDir());
+        File externalCache = getExternalCacheDir();
+        if (externalCache != null) {
+            before += directorySize(externalCache);
+            deleteDirectoryContents(externalCache);
+        }
+        Toast.makeText(this, "Cache temporário do Game Turbo limpo.", Toast.LENGTH_SHORT).show();
+    }
+
+    private long directorySize(File file) {
+        if (file == null || !file.exists()) return 0L;
+        if (file.isFile()) return file.length();
+        long total = 0L;
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) total += directorySize(child);
+        }
+        return total;
+    }
+
+    private void deleteDirectoryContents(File directory) {
+        if (directory == null || !directory.exists() || !directory.isDirectory()) return;
+        File[] children = directory.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            if (child.isDirectory()) {
+                deleteDirectoryContents(child);
+                child.delete();
+            } else {
+                child.delete();
+            }
+        }
+    }
+
+    private void openAppManagement() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Exception error) {
+            Intent intent = new Intent(Settings.ACTION_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
         }
     }
 

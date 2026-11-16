@@ -13,6 +13,8 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
+import android.os.Environment;
+import android.os.storage.StorageManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,17 +30,22 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_OVERLAY = 201;
     private static final int REQUEST_NOTIFICATIONS = 202;
+    private static final int REQUEST_CACHE_PERMISSION = 203;
+    private static final int REQUEST_CLEAR_CACHE = 204;
+    private static final int REQUEST_MANAGE_STORAGE = 205;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView statsText;
     private TextView overlayText;
     private TextView profileText;
     private TextView timerText;
+    private TextView cacheStatusText;
     private EditText minutesInput;
     private String selectedProfile = "Roblox";
     private String pendingAction = null;
@@ -66,6 +73,7 @@ public class MainActivity extends Activity {
         super.onResume();
         refreshOverlayStatus();
         refreshTimer();
+        refreshCacheStatus();
         handler.removeCallbacks(refreshTask);
         handler.post(refreshTask);
     }
@@ -121,6 +129,32 @@ public class MainActivity extends Activity {
         launchCard.addView(launchFreeFire);
         launchRoblox.setOnClickListener(v -> launchGame("com.roblox.client"));
         launchFreeFire.setOnClickListener(v -> launchFreeFire());
+
+        addSpace(page, 14);
+        LinearLayout optimizationCard = card(page, "OTIMIZAÇÃO E LIMPEZA");
+        TextView optimizationHint = makeText(
+            "Ferramentas reais: limpeza de cache, gerenciamento oficial de armazenamento e atalhos para controlar apps. A limpeza global é executada pelo Android e pode pedir uma permissão especial.",
+            13, 0xFF9EACC6, false
+        );
+        optimizationCard.addView(optimizationHint);
+        cacheStatusText = makeText("", 14, 0xFFE5ECF8, false);
+        optimizationCard.addView(cacheStatusText);
+        Button clearTurboCache = makeButton("Limpar cache do Game Turbo");
+        Button clearAllCache = makeButton("Solicitar limpeza de cache dos apps");
+        Button manageStorage = makeButton("Gerenciar armazenamento");
+        Button manageApps = makeButton("Gerenciar apps / segundo plano");
+        Button batterySettings = makeButton("Abrir configurações de bateria");
+        optimizationCard.addView(clearTurboCache);
+        optimizationCard.addView(clearAllCache);
+        optimizationCard.addView(manageStorage);
+        optimizationCard.addView(manageApps);
+        optimizationCard.addView(batterySettings);
+        clearTurboCache.setOnClickListener(v -> clearOwnCache());
+        clearAllCache.setOnClickListener(v -> requestSystemCacheCleanup());
+        manageStorage.setOnClickListener(v -> openSystemStorageManager());
+        manageApps.setOnClickListener(v -> openAppManagement());
+        batterySettings.setOnClickListener(v -> openBatterySettings());
+        refreshCacheStatus();
 
         addSpace(page, 14);
         LinearLayout overlayCard = card(page, "BOLINHA FLUTUANTE");
@@ -259,7 +293,150 @@ public class MainActivity extends Activity {
             } else {
                 Toast.makeText(this, "A permissão de sobreposição não foi concedida.", Toast.LENGTH_LONG).show();
             }
+        } else if (requestCode == REQUEST_CACHE_PERMISSION) {
+            if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
+                launchSystemCacheCleanup();
+            } else {
+                Toast.makeText(this, "Sem essa autorização, use a limpeza de armazenamento do Android ou limpe os caches individualmente.", Toast.LENGTH_LONG).show();
+            }
+        } else if (requestCode == REQUEST_CLEAR_CACHE) {
+            if (resultCode == RESULT_OK) {
+                Toast.makeText(this, "O Android concluiu a solicitação de limpeza de cache.", Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(this, "A limpeza global foi cancelada ou não foi concluída.", Toast.LENGTH_LONG).show();
+            }
+        } else if (requestCode == REQUEST_MANAGE_STORAGE) {
+            Toast.makeText(this, resultCode == RESULT_OK ? "Armazenamento atualizado." : "Gerenciamento de armazenamento fechado.", Toast.LENGTH_SHORT).show();
         }
+        refreshCacheStatus();
+    }
+
+    private void requestSystemCacheCleanup() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            if (!Environment.isExternalStorageManager()) {
+                try {
+                    Intent access = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                    access.setData(Uri.parse("package:" + getPackageName()));
+                    startActivityForResult(access, REQUEST_CACHE_PERMISSION);
+                } catch (Exception firstError) {
+                    try {
+                        startActivityForResult(
+                            new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
+                            REQUEST_CACHE_PERMISSION
+                        );
+                    } catch (Exception secondError) {
+                        Toast.makeText(this, "O Android não disponibilizou a tela dessa autorização.", Toast.LENGTH_LONG).show();
+                    }
+                }
+            } else {
+                launchSystemCacheCleanup();
+            }
+        } else {
+            openSystemStorageManager();
+        }
+    }
+
+    private void launchSystemCacheCleanup() {
+        if (Build.VERSION.SDK_INT < 30) {
+            openSystemStorageManager();
+            return;
+        }
+        try {
+            startActivityForResult(
+                new Intent(StorageManager.ACTION_CLEAR_APP_CACHE),
+                REQUEST_CLEAR_CACHE
+            );
+        } catch (Exception error) {
+            Toast.makeText(this, "Não foi possível abrir a limpeza de cache do sistema.", Toast.LENGTH_LONG).show();
+            openSystemStorageManager();
+        }
+    }
+
+    private void openSystemStorageManager() {
+        try {
+            if (Build.VERSION.SDK_INT >= 25) {
+                Intent intent = new Intent(StorageManager.ACTION_MANAGE_STORAGE);
+                intent.putExtra(StorageManager.EXTRA_REQUESTED_BYTES, 256L * 1024L * 1024L);
+                startActivityForResult(intent, REQUEST_MANAGE_STORAGE);
+            } else {
+                startActivity(new Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS));
+            }
+        } catch (Exception error) {
+            try {
+                startActivity(new Intent(Settings.ACTION_SETTINGS));
+            } catch (Exception ignored) {
+                Toast.makeText(this, "Configurações de armazenamento indisponíveis.", Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    private void openAppManagement() {
+        try {
+            startActivity(new Intent(Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS));
+        } catch (Exception error) {
+            startActivity(new Intent(Settings.ACTION_SETTINGS));
+        }
+    }
+
+    private void openBatterySettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS));
+        } catch (Exception error) {
+            startActivity(new Intent(Settings.ACTION_SETTINGS));
+        }
+    }
+
+    private void clearOwnCache() {
+        long before = getOwnCacheSize();
+        deleteDirectoryContents(getCacheDir());
+        File externalCache = getExternalCacheDir();
+        if (externalCache != null) deleteDirectoryContents(externalCache);
+        long removed = Math.max(0L, before - getOwnCacheSize());
+        refreshCacheStatus();
+        Toast.makeText(this, "Cache do Game Turbo limpo: " + formatBytes(removed), Toast.LENGTH_LONG).show();
+    }
+
+    private void refreshCacheStatus() {
+        if (cacheStatusText == null) return;
+        cacheStatusText.setText("Cache temporário do Game Turbo: " + formatBytes(getOwnCacheSize()));
+    }
+
+    private long getOwnCacheSize() {
+        long total = directorySize(getCacheDir());
+        File externalCache = getExternalCacheDir();
+        if (externalCache != null) total += directorySize(externalCache);
+        return total;
+    }
+
+    private long directorySize(File file) {
+        if (file == null || !file.exists()) return 0L;
+        if (file.isFile()) return file.length();
+        long total = 0L;
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) total += directorySize(child);
+        }
+        return total;
+    }
+
+    private void deleteDirectoryContents(File directory) {
+        if (directory == null || !directory.exists() || !directory.isDirectory()) return;
+        File[] children = directory.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            if (child.isDirectory()) {
+                deleteDirectoryContents(child);
+                child.delete();
+            } else {
+                child.delete();
+            }
+        }
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes < 1024L) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(Locale.getDefault(), "%.1f KB", bytes / 1024.0);
+        return String.format(Locale.getDefault(), "%.1f MB", bytes / (1024.0 * 1024.0));
     }
 
     private void startSessionTimer() {
