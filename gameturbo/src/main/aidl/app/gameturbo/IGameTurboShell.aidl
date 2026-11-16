@@ -1,6 +1,7 @@
 package app.gameturbo;
 
 interface IGameTurboShell {
+    void destroy() = 16777114;
     String trimAllCaches();
     String getDisplaySize();
     String applyDisplayScale(float scale);

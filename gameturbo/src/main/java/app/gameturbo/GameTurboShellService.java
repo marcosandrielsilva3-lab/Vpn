@@ -10,6 +10,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class GameTurboShellService extends IGameTurboShell.Stub {
+    @Override
+    public void destroy() {
+        System.exit(0);
+    }
+
     private static final String[] ALLOWED_GAMES = {
         "com.roblox.client",
         "com.dts.freefireth",
