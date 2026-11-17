@@ -8,14 +8,12 @@ import android.app.Service;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Point;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.IBinder;
-import android.os.SystemClock;
 import android.provider.Settings;
-import android.util.DisplayMetrics;
-import android.view.Display;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -56,7 +54,7 @@ public class DirectionalOverlayService extends Service {
                 return START_NOT_STICKY;
             }
             showOverlay();
-            updateNotification("Setas translúcidas prontas.");
+            updateNotification("Setas prontas. Toque e solte para executar.");
         } else if (STOP.equals(action)) {
             removeOverlay();
             stopForeground(true);
@@ -75,7 +73,6 @@ public class DirectionalOverlayService extends Service {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(5), dp(4), dp(5), dp(5));
-        // Visually translucent, but still a touchable overlay.
         panel.setBackground(background(0x55162237, 18));
 
         TextView drag = new TextView(this);
@@ -166,81 +163,100 @@ public class DirectionalOverlayService extends Service {
         button.setGravity(Gravity.CENTER);
         button.setBackground(background(0x77344F70, 16));
         button.setSoundEffectsEnabled(false);
-        button.setHapticFeedbackEnabled(true);
+        button.setHapticFeedbackEnabled(false);
+        button.setContentDescription("Movimento " + direction);
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(92), dp(88));
         lp.setMargins(dp(2), dp(2), dp(2), dp(2));
         button.setLayoutParams(lp);
 
-        final boolean[] fingerDown = {false};
-        final long[] lastDown = {0L};
-
+        // Only one command is emitted after a complete press-and-release.
+        // Dispatching during ACTION_DOWN can cancel the physical touch in progress.
+        final int[] activePointerId = {-1};
         button.setOnTouchListener((view, event) -> {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN: {
-                    if (!fingerDown[0]) {
-                        fingerDown[0] = true;
-                        long now = SystemClock.uptimeMillis();
-                        // One command per physical press, with a small guard against duplicate downs.
-                        if (now - lastDown[0] >= 150L) {
-                            lastDown[0] = now;
-                            view.setAlpha(0.86f);
-                            view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
-                            sendGesture(direction);
-                        }
-                    }
-                    return true;
+            int action = event.getActionMasked();
+            int actionIndex = event.getActionIndex();
+
+            if (action == MotionEvent.ACTION_DOWN) {
+                if (activePointerId[0] == -1) {
+                    activePointerId[0] = event.getPointerId(actionIndex);
+                    view.setAlpha(0.72f);
                 }
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    fingerDown[0] = false;
-                    view.setAlpha(1f);
-                    return true;
-                default:
-                    // Ignore move and additional pointer events: holding a button never repeats it.
-                    return true;
+                return true;
             }
+
+            if (action == MotionEvent.ACTION_UP) {
+                int pointerId = event.getPointerId(actionIndex);
+                boolean isOurPress = pointerId == activePointerId[0];
+                boolean releasedInside = event.getX(actionIndex) >= 0 &&
+                    event.getX(actionIndex) <= view.getWidth() &&
+                    event.getY(actionIndex) >= 0 &&
+                    event.getY(actionIndex) <= view.getHeight();
+
+                if (isOurPress) {
+                    activePointerId[0] = -1;
+                    view.setAlpha(1f);
+                    if (releasedInside) sendGesture(direction);
+                }
+                return true;
+            }
+
+            if (action == MotionEvent.ACTION_CANCEL) {
+                activePointerId[0] = -1;
+                view.setAlpha(1f);
+                return true;
+            }
+
+            if (action == MotionEvent.ACTION_POINTER_UP &&
+                event.getPointerId(actionIndex) == activePointerId[0]) {
+                activePointerId[0] = -1;
+                view.setAlpha(1f);
+            }
+            return true;
         });
         return button;
     }
 
     private void sendGesture(String direction) {
-        DisplayMetrics metrics = new DisplayMetrics();
-        Display display = wm.getDefaultDisplay();
-        display.getRealMetrics(metrics);
-        int width = metrics.widthPixels;
-        int height = metrics.heightPixels;
+        Point size = new Point();
+        wm.getDefaultDisplay().getRealSize(size);
+        int width = size.x;
+        int height = size.y;
 
-        // Inject the swipe in the central play area, not at the overlay button's location.
+        if (width <= 0 || height <= 0) {
+            Toast.makeText(this, "Não foi possível detectar o tamanho da tela.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         int centerX = width / 2;
-        int centerY = (int) (height * 0.56f);
         int sx, sy, ex, ey;
 
+        // Gestures are placed in the central playable area, away from the overlay.
         if ("up".equals(direction)) {
             sx = centerX;
-            sy = (int) (height * 0.70f);
+            sy = (int) (height * 0.68f);
             ex = centerX;
-            ey = (int) (height * 0.46f);
+            ey = (int) (height * 0.43f);
         } else if ("down".equals(direction)) {
             sx = centerX;
-            sy = (int) (height * 0.46f);
+            sy = (int) (height * 0.43f);
             ex = centerX;
-            ey = (int) (height * 0.70f);
+            ey = (int) (height * 0.68f);
         } else if ("left".equals(direction)) {
-            sx = (int) (width * 0.67f);
-            sy = centerY;
-            ex = (int) (width * 0.33f);
-            ey = centerY;
+            sx = (int) (width * 0.68f);
+            sy = (int) (height * 0.58f);
+            ex = (int) (width * 0.32f);
+            ey = sy;
         } else if ("right".equals(direction)) {
-            sx = (int) (width * 0.33f);
-            sy = centerY;
-            ex = (int) (width * 0.67f);
-            ey = centerY;
+            sx = (int) (width * 0.32f);
+            sy = (int) (height * 0.58f);
+            ex = (int) (width * 0.68f);
+            ey = sy;
         } else {
             return;
         }
 
-        if (!GestureAccessibilityService.sendSwipe(direction, sx, sy, ex, ey, 50)) {
+        if (!GestureAccessibilityService.sendSwipe(direction, sx, sy, ex, ey, 80)) {
             Toast.makeText(this, "O serviço de Acessibilidade não está ativo.", Toast.LENGTH_SHORT).show();
         }
     }
