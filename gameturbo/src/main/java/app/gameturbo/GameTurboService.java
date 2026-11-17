@@ -122,8 +122,8 @@ public class GameTurboService extends Service {
         root.addView(overlayPanel, new LinearLayout.LayoutParams(dp(190), -2));
         addOverlayAction("Massinha + abrir Roblox", () -> openQuickMassinha("com.roblox.client", false));
         addOverlayAction("Massinha + abrir Free Fire", () -> openQuickMassinha("FREE_FIRE", false));
-        addOverlayAction("Restaurar gráfico Roblox", () -> openQuickMassinha("com.roblox.client", true));
-        addOverlayAction("Restaurar gráfico Free Fire", () -> openQuickMassinha("FREE_FIRE", true));
+        addOverlayAction("Restaurar tela normal (Roblox)", () -> openQuickMassinha("com.roblox.client", true));
+        addOverlayAction("Restaurar tela normal (Free Fire)", () -> openQuickMassinha("FREE_FIRE", true));
         addOverlayAction("Abrir Game Turbo", () -> openMainApp());
         addOverlayAction("Abrir Roblox", () -> launchPackage("com.roblox.client"));
         addOverlayAction("Abrir Free Fire", () -> launchFreeFire());

@@ -53,8 +53,18 @@ public class GameTurboShellService extends IGameTurboShell.Stub {
         int scaledWidth = even((int) Math.round(width * scale));
         int scaledHeight = even((int) Math.round(height * scale));
         CommandResult apply = run("wm size " + scaledWidth + "x" + scaledHeight);
-        return "EXIT:" + apply.exitCode + "\nResolução solicitada: " +
-            scaledWidth + "x" + scaledHeight + "\n" + apply.output;
+        if (apply.exitCode != 0) {
+            return "EXIT:" + apply.exitCode + "\nFalha ao alterar a resolução.\n" + apply.output;
+        }
+        CommandResult verify = run("wm size");
+        Matcher confirmed = Pattern.compile("Override size:\\s*(\\d+)x(\\d+)").matcher(verify.output);
+        if (verify.exitCode != 0 || !confirmed.find() ||
+            Integer.parseInt(confirmed.group(1)) != scaledWidth ||
+            Integer.parseInt(confirmed.group(2)) != scaledHeight) {
+            return "EXIT:1\nO Android não confirmou a nova resolução.\n" + verify.output;
+        }
+        return "EXIT:0\nResolução aplicada e confirmada: " +
+            scaledWidth + "x" + scaledHeight + "\n" + verify.output;
     }
 
     @Override
@@ -117,7 +127,8 @@ public class GameTurboShellService extends IGameTurboShell.Stub {
     }
 
     private boolean isAllowedScale(float scale) {
-        return Math.abs(scale - 0.70f) < 0.001f ||
+        return Math.abs(scale - 0.60f) < 0.001f ||
+            Math.abs(scale - 0.70f) < 0.001f ||
             Math.abs(scale - 0.80f) < 0.001f;
     }
 

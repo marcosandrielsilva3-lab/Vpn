@@ -138,12 +138,20 @@ public class MainActivity extends Activity {
         final boolean restore = intent.getBooleanExtra("restore", false);
         handler.postDelayed(() -> {
             if (restore) {
-                if ("FREE_FIRE".equals(target)) requestFreeFireRestore();
-                else requestShellAction("game_restore", "com.roblox.client");
+                requestShellAction("display_reset", null);
             } else if ("FREE_FIRE".equals(target)) {
-                requestFreeFireDownscale(true);
+                String pkg = installedFreeFirePackage();
+                if (pkg == null) {
+                    Toast.makeText(this, "Free Fire ou Free Fire MAX não está instalado.", Toast.LENGTH_LONG).show();
+                } else {
+                    requestShellAction("massinha_launch", pkg);
+                }
             } else if ("com.roblox.client".equals(target)) {
-                requestShellAction("game_apply_launch", "com.roblox.client");
+                if (getPackageManager().getLaunchIntentForPackage("com.roblox.client") == null) {
+                    Toast.makeText(this, "Roblox não está instalado.", Toast.LENGTH_LONG).show();
+                } else {
+                    requestShellAction("massinha_launch", "com.roblox.client");
+                }
             }
         }, 350);
     }
@@ -286,14 +294,14 @@ public class MainActivity extends Activity {
         addSpace(page, 14);
         LinearLayout gameScaleCard = card(page, "MODO MASSINHA — ABRIR O JOGO COM GRÁFICO REDUZIDO");
         TextView gameScaleHint = makeText(
-            "Toque no jogo para solicitar ao Android a renderização em 70% e abrir o jogo. Precisa do Shizuku e de suporte do Android/fabricante/jogo. Depois, use o gráfico mínimo dentro do próprio jogo para reduzir ainda mais os detalhes.",
+            "Este modo reduz a resolução geral da tela para 60%, deixando a imagem bem mais pixelada/embaçada, e só depois abre o jogo. A mudança afeta temporariamente todo o aparelho, não apenas o jogo. O Game Turbo salva a resolução anterior para restaurar.",
             13, 0xFF9EACC6, false
         );
         gameScaleCard.addView(gameScaleHint);
         Button robloxDown = makeButton("ATIVAR MASSINHA + ABRIR ROBLOX");
-        Button robloxRestore = makeButton("Roblox: restaurar gráfico normal");
+        Button robloxRestore = makeButton("Restaurar resolução normal");
         Button freeFireDown = makeButton("ATIVAR MASSINHA + ABRIR FREE FIRE");
-        Button freeFireRestore = makeButton("Free Fire: restaurar gráfico normal");
+        Button freeFireRestore = makeButton("Restaurar resolução normal");
         gameScaleCard.addView(robloxDown);
         gameScaleCard.addView(robloxRestore);
         gameScaleCard.addView(freeFireDown);
@@ -302,12 +310,12 @@ public class MainActivity extends Activity {
             if (getPackageManager().getLaunchIntentForPackage("com.roblox.client") == null) {
                 Toast.makeText(this, "Roblox não está instalado.", Toast.LENGTH_LONG).show();
             } else {
-                requestShellAction("game_apply_launch", "com.roblox.client");
+                requestShellAction("massinha_launch", "com.roblox.client");
             }
         });
-        robloxRestore.setOnClickListener(v -> requestShellAction("game_restore", "com.roblox.client"));
-        freeFireDown.setOnClickListener(v -> requestFreeFireDownscale(true));
-        freeFireRestore.setOnClickListener(v -> requestFreeFireRestore());
+        robloxRestore.setOnClickListener(v -> requestShellAction("display_reset", null));
+        freeFireDown.setOnClickListener(v -> requestFreeFireMassinha());
+        freeFireRestore.setOnClickListener(v -> requestShellAction("display_reset", null));
 
         TextView gameInstructions = makeText(
             "AJUSTE DENTRO DO JOGO:\nRoblox: Menu > Configurações > Modo gráfico Manual > arraste Qualidade gráfica totalmente para a esquerda.\nFree Fire: Gráficos > Suave; desligue Alta resolução e Sombras. Se ainda travar ou aquecer, teste FPS Normal.",
@@ -365,7 +373,7 @@ public class MainActivity extends Activity {
 
         addSpace(page, 18);
         TextView limitation = makeText(
-            "Importante: o controle avançado depende do Shizuku ativo. A redução por jogo só funciona se o Android e o jogo aceitarem a intervenção; o Game Turbo não troca arquivos de textura dos jogos. Use os botões Restaurar para desfazer as alterações.",
+            "Importante: o modo massinha reduz a resolução lógica de toda a tela para 60%, não troca texturas nem modelos dentro dos jogos. Precisa do Shizuku ativo. Use Restaurar resolução normal para desfazer a alteração.",
             12, 0xFF8F9DB6, false
         );
         page.addView(limitation);
@@ -550,13 +558,13 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    private void requestFreeFireDownscale(boolean launchAfter) {
+    private void requestFreeFireMassinha() {
         String pkg = installedFreeFirePackage();
         if (pkg == null) {
             Toast.makeText(this, "Free Fire ou Free Fire MAX não está instalado.", Toast.LENGTH_LONG).show();
             return;
         }
-        requestShellAction(launchAfter ? "game_apply_launch" : "game_apply", pkg);
+        requestShellAction("massinha_launch", pkg);
     }
 
     private void requestFreeFireRestore() {
@@ -634,6 +642,37 @@ public class MainActivity extends Activity {
                     } else {
                         result = shellService.restoreDisplaySize(saved);
                         if (isShellSuccess(result)) getPreferences(MODE_PRIVATE).edit().remove("original_display_override").apply();
+                    }
+                } else if ("massinha_launch".equals(action)) {
+                    String pkg = argument;
+                    String saved = getPreferences(MODE_PRIVATE).getString("original_display_override", null);
+                    if (saved == null) {
+                        String current = shellService.getDisplaySize();
+                        if (!isShellSuccess(current)) {
+                            result = current;
+                            postShellResult(result);
+                            return;
+                        }
+                        saved = shellOutput(current);
+                        getPreferences(MODE_PRIVATE).edit().putString("original_display_override", saved).apply();
+                    }
+                    result = shellService.applyDisplayScale(0.60f);
+                    if (isShellSuccess(result)) {
+                        String verified = shellService.getDisplaySize();
+                        String displayOutput = shellOutput(verified);
+                        if (!isShellSuccess(verified) || !displayOutput.contains("Override size:")) {
+                            result = "EXIT:1\\nO Android não confirmou que a resolução reduzida foi aplicada.\\n" + verified;
+                        } else {
+                            result = result + "\\nResolução reduzida confirmada pelo Android.";
+                            final String packageToLaunch = pkg;
+                            handler.post(() -> {
+                                boolean launched = launchGame(packageToLaunch);
+                                Toast.makeText(this, launched
+                                    ? "Modo Massinha ativo (resolução 60%). A tela inteira fica reduzida."
+                                    : "A resolução foi reduzida, mas o jogo não pôde ser aberto.",
+                                    Toast.LENGTH_LONG).show();
+                            });
+                        }
                     }
                 } else if ("game_apply".equals(action) || "game_apply_launch".equals(action)) {
                     String pkg = argument;
