@@ -5,13 +5,13 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
-import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.view.Display;
@@ -55,7 +55,7 @@ public class DirectionalOverlayService extends Service {
                 return START_NOT_STICKY;
             }
             showOverlay();
-            updateNotification("Gestos rápidos por Acessibilidade ativos.");
+            updateNotification("Setas translúcidas prontas.");
         } else if (STOP.equals(action)) {
             removeOverlay();
             stopForeground(true);
@@ -73,31 +73,32 @@ public class DirectionalOverlayService extends Service {
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(7), dp(6), dp(7), dp(7));
-        panel.setBackground(background(0xD9162237, 18));
+        panel.setPadding(dp(5), dp(4), dp(5), dp(5));
+        // Visually translucent, but still a touchable overlay.
+        panel.setBackground(background(0x55162237, 18));
 
         TextView drag = new TextView(this);
         drag.setText("SEGURE AQUI PARA MOVER");
         drag.setTextColor(0xFFE2EAF6);
-        drag.setTextSize(11);
+        drag.setTextSize(10);
         drag.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         drag.setGravity(Gravity.CENTER);
-        drag.setPadding(dp(5), dp(3), dp(5), dp(5));
-        panel.addView(drag, new LinearLayout.LayoutParams(-1, dp(27)));
+        drag.setPadding(dp(5), dp(2), dp(5), dp(3));
+        panel.addView(drag, new LinearLayout.LayoutParams(-1, dp(25)));
 
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER);
         top.addView(spacer());
         top.addView(makeArrow("↑", "up"));
         top.addView(spacer());
-        panel.addView(top, new LinearLayout.LayoutParams(-1, dp(96)));
+        panel.addView(top, new LinearLayout.LayoutParams(-1, dp(94)));
 
         LinearLayout bottom = new LinearLayout(this);
         bottom.setGravity(Gravity.CENTER);
         bottom.addView(makeArrow("←", "left"));
         bottom.addView(makeArrow("↓", "down"));
         bottom.addView(makeArrow("→", "right"));
-        panel.addView(bottom, new LinearLayout.LayoutParams(-1, dp(96)));
+        panel.addView(bottom, new LinearLayout.LayoutParams(-1, dp(94)));
 
         int type = Build.VERSION.SDK_INT >= 26
             ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -118,7 +119,7 @@ public class DirectionalOverlayService extends Service {
         final float[] down = new float[2];
         final int[] original = new int[2];
         drag.setOnTouchListener((v, e) -> {
-            switch (e.getAction()) {
+            switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     down[0] = e.getRawX();
                     down[1] = e.getRawY();
@@ -156,70 +157,89 @@ public class DirectionalOverlayService extends Service {
     }
 
     private TextView makeArrow(String symbol, String direction) {
-        TextView b = new TextView(this);
-        b.setText(symbol);
-        b.setTextColor(Color.WHITE);
-        b.setTextSize(48);
-        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        b.setGravity(Gravity.CENTER);
-        b.setBackground(background(0xEE29415F, 16));
-        b.setSoundEffectsEnabled(false);
-        b.setHapticFeedbackEnabled(true);
+        TextView button = new TextView(this);
+        button.setText(symbol);
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(48);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setGravity(Gravity.CENTER);
+        button.setBackground(background(0x77344F70, 16));
+        button.setSoundEffectsEnabled(false);
+        button.setHapticFeedbackEnabled(true);
+
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(92), dp(88));
         lp.setMargins(dp(2), dp(2), dp(2), dp(2));
-        b.setLayoutParams(lp);
-        b.setOnTouchListener((v, e) -> {
-            if (e.getAction() == MotionEvent.ACTION_DOWN) {
-                v.setAlpha(0.72f);
-                v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
-                sendGesture(direction);
-                return true;
+        button.setLayoutParams(lp);
+
+        final boolean[] fingerDown = {false};
+        final long[] lastDown = {0L};
+
+        button.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN: {
+                    if (!fingerDown[0]) {
+                        fingerDown[0] = true;
+                        long now = SystemClock.uptimeMillis();
+                        // One command per physical press, with a small guard against duplicate downs.
+                        if (now - lastDown[0] >= 150L) {
+                            lastDown[0] = now;
+                            view.setAlpha(0.86f);
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                            sendGesture(direction);
+                        }
+                    }
+                    return true;
+                }
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    fingerDown[0] = false;
+                    view.setAlpha(1f);
+                    return true;
+                default:
+                    // Ignore move and additional pointer events: holding a button never repeats it.
+                    return true;
             }
-            if (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL) {
-                v.setAlpha(1f);
-                return true;
-            }
-            return true;
         });
-        return b;
+        return button;
     }
 
     private void sendGesture(String direction) {
         DisplayMetrics metrics = new DisplayMetrics();
         Display display = wm.getDefaultDisplay();
         display.getRealMetrics(metrics);
-        int w = metrics.widthPixels;
-        int h = metrics.heightPixels;
+        int width = metrics.widthPixels;
+        int height = metrics.heightPixels;
 
-        int centerX = w / 2;
-        int centerY = (int) (h * 0.59f);
+        // Inject the swipe in the central play area, not at the overlay button's location.
+        int centerX = width / 2;
+        int centerY = (int) (height * 0.56f);
         int sx, sy, ex, ey;
 
         if ("up".equals(direction)) {
             sx = centerX;
-            sy = (int) (h * 0.71f);
+            sy = (int) (height * 0.70f);
             ex = centerX;
-            ey = (int) (h * 0.48f);
+            ey = (int) (height * 0.46f);
         } else if ("down".equals(direction)) {
             sx = centerX;
-            sy = (int) (h * 0.48f);
+            sy = (int) (height * 0.46f);
             ex = centerX;
-            ey = (int) (h * 0.71f);
+            ey = (int) (height * 0.70f);
         } else if ("left".equals(direction)) {
-            sx = (int) (w * 0.64f);
+            sx = (int) (width * 0.67f);
             sy = centerY;
-            ex = (int) (w * 0.36f);
+            ex = (int) (width * 0.33f);
             ey = centerY;
         } else if ("right".equals(direction)) {
-            sx = (int) (w * 0.36f);
+            sx = (int) (width * 0.33f);
             sy = centerY;
-            ex = (int) (w * 0.64f);
+            ex = (int) (width * 0.67f);
             ey = centerY;
         } else {
             return;
         }
 
-        if (!GestureAccessibilityService.sendSwipe(sx, sy, ex, ey, 55)) {
+        if (!GestureAccessibilityService.sendSwipe(direction, sx, sy, ex, ey, 50)) {
             Toast.makeText(this, "O serviço de Acessibilidade não está ativo.", Toast.LENGTH_SHORT).show();
         }
     }
@@ -232,41 +252,41 @@ public class DirectionalOverlayService extends Service {
         params = null;
     }
 
-    private Notification notification(String msg) {
-        Intent i = new Intent(this, MainActivity.class);
-        PendingIntent p = PendingIntent.getActivity(this, 1, i,
+    private Notification notification(String message) {
+        Intent intent = new Intent(this, MainActivity.class);
+        PendingIntent pending = PendingIntent.getActivity(this, 1, intent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
             ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
-        return b.setSmallIcon(android.R.drawable.ic_media_play)
+        return builder.setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("Controle Direcional")
-            .setContentText(msg)
-            .setContentIntent(p)
+            .setContentText(message)
+            .setContentIntent(pending)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build();
     }
 
-    private void updateNotification(String msg) {
+    private void updateNotification(String message) {
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE))
-            .notify(NOTIFICATION_ID, notification(msg));
+            .notify(NOTIFICATION_ID, notification(message));
     }
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL, "Controles na tela", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("Mantém as setas direcionais visíveis durante o jogo.");
+            channel.setDescription("Mantém as setas direcionais translúcidas visíveis durante o jogo.");
             ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(channel);
         }
     }
 
     private GradientDrawable background(int color, int radius) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(color);
-        d.setCornerRadius(dp(radius));
-        d.setStroke(dp(1), 0x805E789A);
-        return d;
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(radius));
+        drawable.setStroke(dp(1), 0x805E789A);
+        return drawable;
     }
 
     private int dp(int value) {
