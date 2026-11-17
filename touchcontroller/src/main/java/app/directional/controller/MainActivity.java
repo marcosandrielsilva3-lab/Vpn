@@ -42,7 +42,7 @@ public class MainActivity extends Activity {
         page.setPadding(dp(20), dp(26), dp(20), dp(28));
         page.setBackgroundColor(Color.rgb(10, 15, 28));
         page.addView(text("CONTROLE DIRECIONAL", 25, Color.WHITE, true));
-        page.addView(text("Quatro setas flutuantes com envio rápido de gestos", 14, 0xFFB6C3D8, false));
+        page.addView(text("Setas flutuantes para controlar os movimentos do jogo", 14, 0xFFB6C3D8, false));
         space(page, 18);
 
         LinearLayout card = new LinearLayout(this);
@@ -50,7 +50,7 @@ public class MainActivity extends Activity {
         card.setPadding(dp(16), dp(16), dp(16), dp(16));
         card.setBackground(bg(0xFF17243A, 16));
         page.addView(card, new LinearLayout.LayoutParams(-1, -2));
-        card.addView(text("O controle usa o serviço de Acessibilidade do Android para enviar os gestos diretamente, sem abrir um comando separado a cada toque.", 14, 0xFFE3EAF5, false));
+        card.addView(text("Cada toque completo envia um único gesto. Toque na seta e solte para executar o movimento.", 14, 0xFFE3EAF5, false));
         status = text("", 14, 0xFF72E0B5, true);
         card.addView(status);
 
@@ -76,8 +76,8 @@ public class MainActivity extends Activity {
         page.addView(help, new LinearLayout.LayoutParams(-1, -2));
         help.addView(text("COMO ATIVAR", 15, 0xFF72E0B5, true));
         help.addView(text("1. Toque em Ativar controle rápido.\n2. Nas configurações do Android, abra Serviços instalados e ative Controle Direcional.\n3. Volte aqui e toque em Ativar setas.", 14, Color.WHITE, false));
-        help.addView(text("O serviço só executa os gestos solicitados pelas setas; ele está configurado para não ler o conteúdo da tela. Também é necessário permitir aparecer sobre outros apps.", 13, 0xFFB6C3D8, false));
-        help.addView(text("Comandos: ↑ pular | ↓ deslizar | ← faixa esquerda | → faixa direita", 13, 0xFFB6C3D8, false));
+        help.addView(text("Também é necessário permitir aparecer sobre outros apps. O serviço executa apenas os gestos solicitados pelas setas; não lê o conteúdo da tela.", 13, 0xFFB6C3D8, false));
+        help.addView(text("↑ Pular   ↓ Deslizar   ← Faixa esquerda   → Faixa direita", 13, 0xFFB6C3D8, false));
 
         setContentView(page);
     }
@@ -150,21 +150,6 @@ public class MainActivity extends Activity {
         String accessibility = GestureAccessibilityService.isRunning() ? "ativa" : "precisa ser ativada";
         String overlay = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this) ? "concedida" : "pendente";
         status.setText("Acessibilidade: " + accessibility + "\nPermissão de sobreposição: " + overlay);
-    }
-
-    @Override
-    protected void onActivityResult(int code, int result, Intent data) {
-        super.onActivityResult(code, result, data);
-        if (code == REQ_OVERLAY) {
-            updateStatus();
-            if (pendingOverlay && (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this))) {
-                pendingOverlay = false;
-                startControlsAndGame();
-            } else if (pendingOverlay) {
-                pendingOverlay = false;
-                Toast.makeText(this, "A permissão de sobreposição não foi concedida.", Toast.LENGTH_LONG).show();
-            }
-        }
     }
 
     private TextView text(String value, int size, int color, boolean bold) {
