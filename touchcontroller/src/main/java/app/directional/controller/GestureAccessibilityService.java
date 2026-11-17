@@ -14,10 +14,10 @@ public class GestureAccessibilityService extends AccessibilityService {
     private static volatile GestureAccessibilityService instance;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ArrayDeque<GestureRequest> queue = new ArrayDeque<>();
-    private static final int MAX_PENDING_GESTURES = 4;
-    private static final long MAX_QUEUE_AGE_MS = 450L;
-    private static final int MIN_GESTURE_MS = 60;
-    private static final int MAX_GESTURE_MS = 110;
+    private static final int MAX_PENDING_GESTURES = 1;
+    private static final long MAX_QUEUE_AGE_MS = 180L;
+    private static final int MIN_GESTURE_MS = 25;
+    private static final int MAX_GESTURE_MS = 55;
 
     private GestureRequest activeRequest;
 
@@ -34,7 +34,11 @@ public class GestureAccessibilityService extends AccessibilityService {
             Math.max(MIN_GESTURE_MS, Math.min(MAX_GESTURE_MS, durationMs)),
             SystemClock.uptimeMillis()
         );
-        service.mainHandler.post(() -> service.enqueue(request));
+        if (Looper.myLooper() == service.mainHandler.getLooper()) {
+            service.enqueue(request);
+        } else {
+            service.mainHandler.post(() -> service.enqueue(request));
+        }
         return true;
     }
 
@@ -51,15 +55,12 @@ public class GestureAccessibilityService extends AccessibilityService {
 
     private void enqueue(GestureRequest request) {
         long now = SystemClock.uptimeMillis();
-
-        // Remove expired commands instead of replaying taps long after they were made.
         while (!queue.isEmpty() &&
             now - queue.peekFirst().createdAt > MAX_QUEUE_AGE_MS) {
             queue.removeFirst();
         }
 
-        // Keep the most recent user inputs if the system cannot process an unusually
-        // large burst. There is deliberately no same-direction debounce.
+        // Keep only the newest waiting move; old queued moves feel like input lag.
         while (queue.size() >= MAX_PENDING_GESTURES) {
             queue.removeFirst();
         }
@@ -99,7 +100,6 @@ public class GestureAccessibilityService extends AccessibilityService {
 
                 @Override
                 public void onCancelled(GestureDescription description) {
-                    // Never replay a cancelled command; replay could cause an unexpected move.
                     finishRequest(request);
                 }
             }, mainHandler);
@@ -113,7 +113,8 @@ public class GestureAccessibilityService extends AccessibilityService {
     private void finishRequest(GestureRequest request) {
         if (activeRequest != request) return;
         activeRequest = null;
-        mainHandler.post(this::dispatchNext);
+        // Callback already runs on mainHandler; no extra main-loop hop is needed.
+        dispatchNext();
     }
 
     @Override
