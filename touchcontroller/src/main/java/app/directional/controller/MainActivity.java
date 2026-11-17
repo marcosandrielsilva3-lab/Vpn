@@ -17,16 +17,34 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import rikka.shizuku.Shizuku;
+
 public class MainActivity extends Activity {
     private static final int REQ_OVERLAY = 710;
+    private static final int REQ_SHIZUKU = 711;
     private static final String GAME = "com.random.zurich";
     private TextView status;
     private boolean pendingOverlay = false;
+
+    private final Shizuku.OnRequestPermissionResultListener shizukuPermissionListener =
+        (requestCode, grantResult) -> {
+            if (requestCode == REQ_SHIZUKU) {
+                updateStatus();
+                Toast.makeText(this,
+                    grantResult == PackageManager.PERMISSION_GRANTED
+                        ? "Modo rápido autorizado. Ative as setas novamente."
+                        : "Permissão Shizuku não concedida.",
+                    Toast.LENGTH_LONG).show();
+            }
+        };
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         buildUi();
+        try {
+            Shizuku.addRequestPermissionResultListener(shizukuPermissionListener);
+        } catch (Throwable ignored) {}
         updateStatus();
     }
 
@@ -34,6 +52,13 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updateStatus();
+    }
+
+    @Override
+    protected void onDestroy() {
+        try { Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener); }
+        catch (Throwable ignored) {}
+        super.onDestroy();
     }
 
     private void buildUi() {
@@ -50,19 +75,22 @@ public class MainActivity extends Activity {
         card.setPadding(dp(16), dp(16), dp(16), dp(16));
         card.setBackground(bg(0xFF17243A, 16));
         page.addView(card, new LinearLayout.LayoutParams(-1, -2));
-        card.addView(text("Cada toque completo envia um único gesto. Toque na seta e solte para executar o movimento.", 14, 0xFFE3EAF5, false));
+        card.addView(text("Cada toque completo envia um movimento. O modo rápido é opcional e usa Shizuku; sem ele, o app usa Acessibilidade.", 14, 0xFFE3EAF5, false));
         status = text("", 14, 0xFF72E0B5, true);
         card.addView(status);
 
-        Button accessibility = button("1. Ativar controle rápido (Acessibilidade)");
-        Button start = button("2. Ativar setas e abrir o jogo");
+        Button fast = button("Ativar modo rápido (Shizuku)");
+        Button accessibility = button("Ativar controle (Acessibilidade)");
+        Button start = button("Ativar setas e abrir o jogo");
         Button stop = button("Desativar setas");
         Button open = button("Abrir jogo");
+        card.addView(fast);
         card.addView(accessibility);
         card.addView(start);
         card.addView(stop);
         card.addView(open);
 
+        fast.setOnClickListener(v -> enableFastMode());
         accessibility.setOnClickListener(v -> openAccessibilitySettings());
         start.setOnClickListener(v -> prepareControls());
         stop.setOnClickListener(v -> stopControls());
@@ -75,18 +103,40 @@ public class MainActivity extends Activity {
         help.setBackground(bg(0xFF17243A, 16));
         page.addView(help, new LinearLayout.LayoutParams(-1, -2));
         help.addView(text("COMO ATIVAR", 15, 0xFF72E0B5, true));
-        help.addView(text("1. Toque em Ativar controle rápido.\n2. Nas configurações do Android, abra Serviços instalados e ative Controle Direcional.\n3. Volte aqui e toque em Ativar setas.", 14, Color.WHITE, false));
-        help.addView(text("Também é necessário permitir aparecer sobre outros apps. O serviço executa apenas os gestos solicitados pelas setas; não lê o conteúdo da tela.", 13, 0xFFB6C3D8, false));
-        help.addView(text("↑ Pular   ↓ Deslizar   ← Faixa esquerda   → Faixa direita", 13, 0xFFB6C3D8, false));
+        help.addView(text("1. Para o modo rápido: instale e inicie Shizuku, toque em Ativar modo rápido e conceda a permissão.\n2. Como alternativa, ative Controle Direcional em Serviços instalados na Acessibilidade.\n3. Permita aparecer sobre outros apps e toque em Ativar setas.", 14, Color.WHITE, false));
+        help.addView(text("Setas: ↑ Pular   ↓ Deslizar   ← Faixa esquerda   → Faixa direita", 13, 0xFFB6C3D8, false));
 
         setContentView(page);
+    }
+
+    private void enableFastMode() {
+        try {
+            if (!Shizuku.pingBinder()) {
+                Toast.makeText(this,
+                    "Abra o Shizuku e inicie o serviço primeiro. No Android 11 ou superior, use Depuração sem fio.",
+                    Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (Shizuku.isPreV11()) {
+                Toast.makeText(this, "Atualize o Shizuku para uma versão compatível.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Modo rápido já está autorizado.", Toast.LENGTH_SHORT).show();
+            } else {
+                Shizuku.requestPermission(REQ_SHIZUKU);
+            }
+            updateStatus();
+        } catch (Throwable error) {
+            Toast.makeText(this, "Não foi possível iniciar o modo rápido: " + error.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     private void prepareControls() {
         if (!GestureAccessibilityService.isRunning()) {
             new AlertDialog.Builder(this)
-                .setTitle("Ative o Controle Direcional")
-                .setMessage("O Android precisa permitir que este app execute os gestos das setas. Na próxima tela, abra Serviços instalados e ative Controle Direcional. Depois volte para este app.")
+                .setTitle("Ative o controle")
+                .setMessage("Ative Controle Direcional em Serviços instalados na Acessibilidade. O Shizuku acelera os gestos quando estiver autorizado, mas a Acessibilidade é mantida como alternativa.")
                 .setPositiveButton("Abrir Acessibilidade", (dialog, which) -> openAccessibilitySettings())
                 .setNegativeButton("Cancelar", null)
                 .show();
@@ -149,7 +199,16 @@ public class MainActivity extends Activity {
         if (status == null) return;
         String accessibility = GestureAccessibilityService.isRunning() ? "ativa" : "precisa ser ativada";
         String overlay = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this) ? "concedida" : "pendente";
-        status.setText("Acessibilidade: " + accessibility + "\nPermissão de sobreposição: " + overlay);
+        String shizuku = "indisponível";
+        try {
+            if (Shizuku.pingBinder()) {
+                shizuku = Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+                    ? "autorizado" : "aguardando permissão";
+            }
+        } catch (Throwable ignored) {}
+        status.setText("Acessibilidade: " + accessibility +
+            "\nShizuku: " + shizuku +
+            "\nSobreposição: " + overlay);
     }
 
     private TextView text(String value, int size, int color, boolean bold) {
