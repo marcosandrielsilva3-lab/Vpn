@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_gesture_description">Envia gestos de deslizar quando você toca nas setas do Controle Direcional. Não lê o conteúdo da tela.</string>
+</resources>
