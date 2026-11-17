@@ -1,25 +1,92 @@
 package app.directional.controller;
 
 import android.os.RemoteException;
+import android.os.SystemClock;
+import android.view.InputDevice;
+import android.view.InputEvent;
+import android.view.MotionEvent;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.lang.reflect.Method;
 
 public class GestureShellService extends IGestureShell.Stub {
+    private static Object inputManager;
+    private static Method injectMethod;
+
     @Override public String ping() throws RemoteException {
-        CommandResult r = run(new String[]{"/system/bin/id"});
-        return "EXIT:" + r.exitCode + "\n" + r.output;
+        try {
+            ensureInjector();
+            return "EXIT:0\nDirect touch injector ready";
+        } catch (Throwable e) {
+            return "EXIT:0\nDirect injector unavailable; shell input fallback enabled: " + e.getMessage();
+        }
     }
 
     @Override public String swipe(int sx, int sy, int ex, int ey, int durationMs) throws RemoteException {
-        if (!valid(sx, sy) || !valid(ex, ey) || durationMs < 35 || durationMs > 300)
-            return "EXIT:2\nParâmetros do gesto inválidos.";
-        CommandResult r = run(new String[]{
-            "/system/bin/input", "swipe",
-            Integer.toString(sx), Integer.toString(sy),
-            Integer.toString(ex), Integer.toString(ey),
-            Integer.toString(durationMs)
-        });
-        return "EXIT:" + r.exitCode + "\n" + r.output;
+        if (!valid(sx, sy) || !valid(ex, ey) || durationMs < 20 || durationMs > 300)
+            return "EXIT:2\nInvalid gesture coordinates or duration.";
+        try {
+            ensureInjector();
+            injectSwipe(sx, sy, ex, ey, durationMs);
+            return "EXIT:0\nDIRECT";
+        } catch (Throwable directError) {
+            // Keep a compatibility fallback for Android versions that block hidden InputManager APIs.
+            CommandResult fallback = run(new String[]{
+                "/system/bin/input", "touchscreen", "swipe",
+                Integer.toString(sx), Integer.toString(sy),
+                Integer.toString(ex), Integer.toString(ey),
+                Integer.toString(Math.max(35, Math.min(90, durationMs)))
+            });
+            if (fallback.exitCode == 0) return "EXIT:0\nFALLBACK";
+            return "EXIT:" + fallback.exitCode + "\nDirect: " + directError.getClass().getSimpleName()
+                + ": " + directError.getMessage() + "\n" + fallback.output;
+        }
+    }
+
+    private static synchronized void ensureInjector() throws Exception {
+        if (inputManager != null && injectMethod != null) return;
+        Class<?> cls = Class.forName("android.hardware.input.InputManager");
+        Method getter = cls.getDeclaredMethod("getInstance");
+        getter.setAccessible(true);
+        inputManager = getter.invoke(null);
+        injectMethod = cls.getDeclaredMethod("injectInputEvent", InputEvent.class, int.class);
+        injectMethod.setAccessible(true);
+    }
+
+    private static void injectSwipe(int sx, int sy, int ex, int ey, int durationMs) throws Exception {
+        long downTime = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, sx, sy, 0);
+        MotionEvent move = null;
+        MotionEvent up = null;
+        try {
+            configure(down);
+            invokeInject(down);
+            // Start the gesture immediately; this short interval is only the swipe's travel time.
+            Thread.sleep(Math.max(20, Math.min(45, durationMs)));
+            long moveTime = SystemClock.uptimeMillis();
+            move = MotionEvent.obtain(downTime, moveTime, MotionEvent.ACTION_MOVE, ex, ey, 0);
+            configure(move);
+            invokeInject(move);
+            long upTime = SystemClock.uptimeMillis();
+            up = MotionEvent.obtain(downTime, upTime, MotionEvent.ACTION_UP, ex, ey, 0);
+            configure(up);
+            invokeInject(up);
+        } finally {
+            down.recycle();
+            if (move != null) move.recycle();
+            if (up != null) up.recycle();
+        }
+    }
+
+    private static void configure(MotionEvent event) {
+        event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        if (android.os.Build.VERSION.SDK_INT >= 29) event.setDisplayId(0);
+    }
+
+    private static void invokeInject(InputEvent event) throws Exception {
+        Object accepted = injectMethod.invoke(inputManager, event, 0 /* async */);
+        if (accepted instanceof Boolean && !((Boolean) accepted))
+            throw new IllegalStateException("Android rejected the touch event");
     }
 
     private boolean valid(int x, int y) {
