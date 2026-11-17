@@ -15,7 +15,8 @@ public class GestureShellService extends IGestureShell.Stub {
     private static Method setSourceMethod;
     private static Method setDisplayIdMethod;
 
-    @Override public String ping() throws RemoteException {
+    @Override
+    public String ping() throws RemoteException {
         try {
             ensureInjector();
             return "EXIT:0\nDirect touch injector ready";
@@ -24,7 +25,8 @@ public class GestureShellService extends IGestureShell.Stub {
         }
     }
 
-    @Override public String swipe(int sx, int sy, int ex, int ey, int durationMs) throws RemoteException {
+    @Override
+    public String swipe(int sx, int sy, int ex, int ey, int durationMs) throws RemoteException {
         if (!valid(sx, sy) || !valid(ex, ey) || durationMs < 20 || durationMs > 300)
             return "EXIT:2\nInvalid gesture coordinates or duration.";
         try {
@@ -32,12 +34,11 @@ public class GestureShellService extends IGestureShell.Stub {
             injectSwipe(sx, sy, ex, ey, durationMs);
             return "EXIT:0\nDIRECT";
         } catch (Throwable directError) {
-            // Keep a compatibility fallback for Android versions that block hidden InputManager APIs.
             CommandResult fallback = run(new String[]{
                 "/system/bin/input", "touchscreen", "swipe",
                 Integer.toString(sx), Integer.toString(sy),
                 Integer.toString(ex), Integer.toString(ey),
-                Integer.toString(Math.max(35, Math.min(90, durationMs)))
+                Integer.toString(Math.max(30, Math.min(70, durationMs)))
             });
             if (fallback.exitCode == 0) return "EXIT:0\nFALLBACK";
             return "EXIT:" + fallback.exitCode + "\nDirect: " + directError.getClass().getSimpleName()
@@ -57,39 +58,55 @@ public class GestureShellService extends IGestureShell.Stub {
 
     private static void injectSwipe(int sx, int sy, int ex, int ey, int durationMs) throws Exception {
         long downTime = SystemClock.uptimeMillis();
-        MotionEvent down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, sx, sy, 0);
-        MotionEvent move = null;
-        MotionEvent up = null;
+        MotionEvent down = MotionEvent.obtain(
+            downTime, downTime, MotionEvent.ACTION_DOWN, sx, sy, 0);
         try {
             configure(down);
             invokeInject(down);
-            // Start the gesture immediately; this short interval is only the swipe's travel time.
-            Thread.sleep(Math.max(20, Math.min(45, durationMs)));
-            long moveTime = SystemClock.uptimeMillis();
-            move = MotionEvent.obtain(downTime, moveTime, MotionEvent.ACTION_MOVE, ex, ey, 0);
-            configure(move);
-            invokeInject(move);
+
+            // Several small MOVE samples are more reliable for games than one large jump.
+            final int samples = 4;
+            int interval = Math.max(4, durationMs / samples);
+            for (int i = 1; i <= samples; i++) {
+                Thread.sleep(interval);
+                float fraction = i / (float) samples;
+                float x = sx + (ex - sx) * fraction;
+                float y = sy + (ey - sy) * fraction;
+                long eventTime = SystemClock.uptimeMillis();
+                MotionEvent move = MotionEvent.obtain(
+                    downTime, eventTime, MotionEvent.ACTION_MOVE, x, y, 0);
+                try {
+                    configure(move);
+                    invokeInject(move);
+                } finally {
+                    move.recycle();
+                }
+            }
+
             long upTime = SystemClock.uptimeMillis();
-            up = MotionEvent.obtain(downTime, upTime, MotionEvent.ACTION_UP, ex, ey, 0);
-            configure(up);
-            invokeInject(up);
+            MotionEvent up = MotionEvent.obtain(
+                downTime, upTime, MotionEvent.ACTION_UP, ex, ey, 0);
+            try {
+                configure(up);
+                invokeInject(up);
+            } finally {
+                up.recycle();
+            }
         } finally {
             down.recycle();
-            if (move != null) move.recycle();
-            if (up != null) up.recycle();
         }
     }
 
     private static void configure(MotionEvent event) {
         try {
             if (setSourceMethod == null) {
-                setSourceMethod = android.view.InputEvent.class.getDeclaredMethod("setSource", int.class);
+                setSourceMethod = InputEvent.class.getDeclaredMethod("setSource", int.class);
                 setSourceMethod.setAccessible(true);
             }
             setSourceMethod.invoke(event, InputDevice.SOURCE_TOUCHSCREEN);
             if (android.os.Build.VERSION.SDK_INT >= 29) {
                 if (setDisplayIdMethod == null) {
-                    setDisplayIdMethod = android.view.InputEvent.class.getDeclaredMethod("setDisplayId", int.class);
+                    setDisplayIdMethod = InputEvent.class.getDeclaredMethod("setDisplayId", int.class);
                     setDisplayIdMethod.setAccessible(true);
                 }
                 setDisplayIdMethod.invoke(event, 0);
@@ -100,7 +117,7 @@ public class GestureShellService extends IGestureShell.Stub {
     }
 
     private static void invokeInject(InputEvent event) throws Exception {
-        Object accepted = injectMethod.invoke(inputManager, event, 0 /* async */);
+        Object accepted = injectMethod.invoke(inputManager, event, 0);
         if (accepted instanceof Boolean && !((Boolean) accepted))
             throw new IllegalStateException("Android rejected the touch event");
     }
@@ -130,14 +147,17 @@ public class GestureShellService extends IGestureShell.Stub {
         }
     }
 
-    @Override public void destroy() { System.exit(0); }
+    @Override
+    public void destroy() {
+        System.exit(0);
+    }
 
     private static final class CommandResult {
         final int exitCode;
         final String output;
-        CommandResult(int c, String o) {
-            exitCode = c;
-            output = o == null ? "" : o;
+        CommandResult(int code, String output) {
+            this.exitCode = code;
+            this.output = output == null ? "" : output;
         }
     }
 }
