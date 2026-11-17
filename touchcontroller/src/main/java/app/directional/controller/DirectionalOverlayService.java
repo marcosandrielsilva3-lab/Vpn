@@ -16,6 +16,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.view.Display;
@@ -37,10 +38,10 @@ public class DirectionalOverlayService extends Service {
     private static final String CHANNEL = "directional_controls";
     private static final int NOTIFICATION_ID = 8101;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    // Bounded queue prevents old taps from piling up and making the controls feel delayed.
+    // One pending tap maximum: never build up a backlog of stale movements.
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(
         1, 1, 0L, TimeUnit.MILLISECONDS,
-        new ArrayBlockingQueue<>(4),
+        new ArrayBlockingQueue<>(1),
         new ThreadPoolExecutor.DiscardOldestPolicy()
     );
     private WindowManager wm;
@@ -55,9 +56,9 @@ public class DirectionalOverlayService extends Service {
             shell = IGestureShell.Stub.asInterface(binder);
             binding = false;
             handler.post(() -> {
-                Toast.makeText(DirectionalOverlayService.this, "Controle conectado e pronto.", Toast.LENGTH_SHORT).show();
+                Toast.makeText(DirectionalOverlayService.this, "Controle pronto.", Toast.LENGTH_SHORT).show();
                 showOverlay();
-                updateNotification("Setas prontas para usar.");
+                updateNotification("Toque nas setas para executar o movimento.");
             });
         }
         @Override public void onServiceDisconnected(ComponentName name) {
@@ -80,9 +81,8 @@ public class DirectionalOverlayService extends Service {
             startForeground(NOTIFICATION_ID, notification("Preparando controles."));
         if (START.equals(action)) {
             bindShell();
-            // Do not show clickable arrows until the Shizuku gesture service is connected.
             if (shell != null) showOverlay();
-            updateNotification("Conectando controle de gestos...");
+            updateNotification("Conectando o controle...");
         } else if (STOP.equals(action)) {
             removeOverlay();
             unbindShell();
@@ -103,19 +103,19 @@ public class DirectionalOverlayService extends Service {
             userArgs = new Shizuku.UserServiceArgs(
                 new ComponentName(getPackageName(), GestureShellService.class.getName()))
                 .tag("directional-gesture-shell").daemon(false).processNameSuffix("gesture")
-                .debuggable(BuildConfig.DEBUG).version(1);
+                .debuggable(BuildConfig.DEBUG).version(2);
             binding = true;
             Shizuku.bindUserService(userArgs, connection);
             handler.postDelayed(() -> {
                 if (binding && shell == null) {
                     Toast.makeText(DirectionalOverlayService.this,
-                        "O Shizuku demorou para conectar. Confira se ele continua ativo e tente reativar.",
+                        "Shizuku ainda está conectando. Confira se ele continua ativo.",
                         Toast.LENGTH_LONG).show();
                 }
-            }, 5000);
+            }, 4000);
         } catch (Throwable e) {
             binding = false;
-            Toast.makeText(this, "Falha ao conectar o serviço de gestos: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Falha ao conectar o serviço: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -137,31 +137,31 @@ public class DirectionalOverlayService extends Service {
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(8), dp(7), dp(8), dp(8));
+        panel.setPadding(dp(7), dp(6), dp(7), dp(7));
         panel.setBackground(background(0xD9162237, 18));
 
         TextView drag = new TextView(this);
-        drag.setText("CONTROLE • SEGURE PARA MOVER");
+        drag.setText("SEGURE AQUI PARA MOVER");
         drag.setTextColor(0xFFE2EAF6);
-        drag.setTextSize(10);
+        drag.setTextSize(11);
         drag.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         drag.setGravity(Gravity.CENTER);
-        drag.setPadding(dp(5), dp(4), dp(5), dp(7));
-        panel.addView(drag, new LinearLayout.LayoutParams(-1, dp(28)));
+        drag.setPadding(dp(5), dp(3), dp(5), dp(5));
+        panel.addView(drag, new LinearLayout.LayoutParams(-1, dp(27)));
 
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER);
         top.addView(spacer());
         top.addView(makeArrow("↑", "up"));
         top.addView(spacer());
-        panel.addView(top, new LinearLayout.LayoutParams(-1, dp(70)));
+        panel.addView(top, new LinearLayout.LayoutParams(-1, dp(96)));
 
         LinearLayout bottom = new LinearLayout(this);
         bottom.setGravity(Gravity.CENTER);
         bottom.addView(makeArrow("←", "left"));
         bottom.addView(makeArrow("↓", "down"));
         bottom.addView(makeArrow("→", "right"));
-        panel.addView(bottom, new LinearLayout.LayoutParams(-1, dp(70)));
+        panel.addView(bottom, new LinearLayout.LayoutParams(-1, dp(96)));
 
         int type = Build.VERSION.SDK_INT >= 26
             ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -176,30 +176,26 @@ public class DirectionalOverlayService extends Service {
             PixelFormat.TRANSLUCENT
         );
         params.gravity = Gravity.BOTTOM | Gravity.START;
-        params.x = dp(14);
-        params.y = dp(70);
+        params.x = dp(8);
+        params.y = dp(54);
 
         final float[] down = new float[2];
         final int[] original = new int[2];
         drag.setOnTouchListener((v, e) -> {
             switch (e.getAction()) {
                 case MotionEvent.ACTION_DOWN:
-                    down[0] = e.getRawX();
-                    down[1] = e.getRawY();
-                    original[0] = params.x;
-                    original[1] = params.y;
+                    down[0] = e.getRawX(); down[1] = e.getRawY();
+                    original[0] = params.x; original[1] = params.y;
                     return true;
                 case MotionEvent.ACTION_MOVE:
-                    float dx = e.getRawX() - down[0];
-                    float dy = e.getRawY() - down[1];
+                    float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
                     if (Math.abs(dx) > dp(4) || Math.abs(dy) > dp(4)) {
                         params.x = Math.max(0, original[0] + (int) dx);
                         params.y = Math.max(0, original[1] - (int) dy);
                         try { wm.updateViewLayout(root, params); } catch (Throwable ignored) {}
                     }
                     return true;
-                default:
-                    return true;
+                default: return true;
             }
         });
 
@@ -207,8 +203,7 @@ public class DirectionalOverlayService extends Service {
         try {
             wm.addView(root, params);
         } catch (Throwable e) {
-            root = null;
-            params = null;
+            root = null; params = null;
             Toast.makeText(this, "Não foi possível mostrar as setas: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
@@ -223,18 +218,28 @@ public class DirectionalOverlayService extends Service {
         TextView b = new TextView(this);
         b.setText(symbol);
         b.setTextColor(Color.WHITE);
-        b.setTextSize(34);
+        b.setTextSize(48);
         b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         b.setGravity(Gravity.CENTER);
-        b.setBackground(background(0xEE29415F, 15));
+        b.setBackground(background(0xEE29415F, 16));
         b.setSoundEffectsEnabled(false);
         b.setHapticFeedbackEnabled(true);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(70), dp(66));
-        lp.setMargins(dp(4), dp(2), dp(4), dp(2));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(92), dp(88));
+        lp.setMargins(dp(2), dp(2), dp(2), dp(2));
         b.setLayoutParams(lp);
-        b.setOnClickListener(v -> {
-            v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
-            sendGesture(direction);
+        b.setOnTouchListener((v, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                v.setAlpha(0.72f);
+                v.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                // Send on finger-down rather than waiting for ACTION_UP / click.
+                sendGesture(direction);
+                return true;
+            }
+            if (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL) {
+                v.setAlpha(1f);
+                return true;
+            }
+            return true;
         });
         return b;
     }
@@ -242,8 +247,7 @@ public class DirectionalOverlayService extends Service {
     private void sendGesture(String direction) {
         final IGestureShell current = shell;
         if (current == null) {
-            Toast.makeText(this, "O controle ainda está conectando. Aguarde aparecer 'Controle conectado'.",
-                Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "O Shizuku ainda está conectando.", Toast.LENGTH_SHORT).show();
             if (!binding) bindShell();
             return;
         }
@@ -251,30 +255,27 @@ public class DirectionalOverlayService extends Service {
         DisplayMetrics m = new DisplayMetrics();
         Display d = wm.getDefaultDisplay();
         d.getRealMetrics(m);
-        int w = m.widthPixels;
-        int h = m.heightPixels;
+        int w = m.widthPixels, h = m.heightPixels;
         int sx, sy, ex, ey;
-
         if ("up".equals(direction)) {
-            // Jump starts farther from the bottom edge and travels a larger vertical distance.
+            // Runner jump: begin low, at the character's centerline, and swipe upward clearly.
             sx = (int)(w * 0.50f);
-            sy = (int)(h * 0.76f);
-            ex = sx;
-            ey = (int)(h * 0.24f);
+            sy = (int)(h * 0.82f);
+            ex = (int)(w * 0.50f);
+            ey = (int)(h * 0.53f);
         } else if ("down".equals(direction)) {
-            // Keep the previously working slide direction, slightly away from the screen edge.
             sx = (int)(w * 0.50f);
-            sy = (int)(h * 0.43f);
-            ex = sx;
-            ey = (int)(h * 0.78f);
+            sy = (int)(h * 0.48f);
+            ex = (int)(w * 0.50f);
+            ey = (int)(h * 0.80f);
         } else if ("left".equals(direction)) {
             sx = (int)(w * 0.82f);
-            sy = (int)(h * 0.60f);
-            ex = (int)(w * 0.34f);
+            sy = (int)(h * 0.61f);
+            ex = (int)(w * 0.30f);
             ey = sy;
         } else if ("right".equals(direction)) {
-            sx = (int)(w * 0.34f);
-            sy = (int)(h * 0.60f);
+            sx = (int)(w * 0.30f);
+            sy = (int)(h * 0.61f);
             ex = (int)(w * 0.82f);
             ey = sy;
         } else {
@@ -284,27 +285,20 @@ public class DirectionalOverlayService extends Service {
         try {
             executor.execute(() -> {
                 try {
-                    String result = current.swipe(sx, sy, ex, ey, 70);
-                    if (result == null || !result.startsWith("EXIT:0")) {
-                        handler.post(() -> Toast.makeText(this,
-                            "Falha ao enviar gesto: " + result, Toast.LENGTH_LONG).show());
-                    }
+                    current.swipe(sx, sy, ex, ey, 35);
                 } catch (Throwable e) {
                     handler.post(() -> Toast.makeText(this,
                         "Falha ao enviar seta: " + e.getMessage(), Toast.LENGTH_LONG).show());
                 }
             });
         } catch (Throwable e) {
-            Toast.makeText(this, "Não foi possível enviar o toque: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Toque descartado; tente novamente.", Toast.LENGTH_SHORT).show();
         }
     }
 
     private void removeOverlay() {
-        if (root != null) {
-            try { wm.removeView(root); } catch (Throwable ignored) {}
-        }
-        root = null;
-        params = null;
+        if (root != null) try { wm.removeView(root); } catch (Throwable ignored) {}
+        root = null; params = null;
     }
 
     private Notification notification(String msg) {
@@ -312,15 +306,10 @@ public class DirectionalOverlayService extends Service {
         PendingIntent p = PendingIntent.getActivity(this, 1, i,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26
-            ? new Notification.Builder(this, CHANNEL)
-            : new Notification.Builder(this);
+            ? new Notification.Builder(this, CHANNEL) : new Notification.Builder(this);
         return b.setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("Controle Direcional")
-            .setContentText(msg)
-            .setContentIntent(p)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .build();
+            .setContentTitle("Controle Direcional").setContentText(msg)
+            .setContentIntent(p).setOngoing(true).setOnlyAlertOnce(true).build();
     }
 
     private void updateNotification(String msg) {
@@ -339,22 +328,14 @@ public class DirectionalOverlayService extends Service {
 
     private GradientDrawable background(int color, int radius) {
         GradientDrawable d = new GradientDrawable();
-        d.setColor(color);
-        d.setCornerRadius(dp(radius));
-        d.setStroke(dp(1), 0x805E789A);
+        d.setColor(color); d.setCornerRadius(dp(radius)); d.setStroke(dp(1), 0x805E789A);
         return d;
     }
 
-    private int dp(int n) {
-        return Math.round(n * getResources().getDisplayMetrics().density);
-    }
+    private int dp(int n) { return Math.round(n * getResources().getDisplayMetrics().density); }
 
     @Override public void onDestroy() {
-        removeOverlay();
-        unbindShell();
-        executor.shutdownNow();
-        super.onDestroy();
+        removeOverlay(); unbindShell(); executor.shutdownNow(); super.onDestroy();
     }
-
     @Override public IBinder onBind(Intent intent) { return null; }
 }
