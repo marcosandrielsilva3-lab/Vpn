@@ -122,6 +122,30 @@ public class MainActivity extends Activity {
         buildInterface();
         refreshStats();
         refreshTimer();
+        handleQuickMassinhaIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleQuickMassinhaIntent(intent);
+    }
+
+    private void handleQuickMassinhaIntent(Intent intent) {
+        if (intent == null || !"app.gameturbo.QUICK_MASSINHA".equals(intent.getAction())) return;
+        final String target = intent.getStringExtra("target_package");
+        final boolean restore = intent.getBooleanExtra("restore", false);
+        handler.postDelayed(() -> {
+            if (restore) {
+                if ("FREE_FIRE".equals(target)) requestFreeFireRestore();
+                else requestShellAction("game_restore", "com.roblox.client");
+            } else if ("FREE_FIRE".equals(target)) {
+                requestFreeFireDownscale(true);
+            } else if ("com.roblox.client".equals(target)) {
+                requestShellAction("game_apply_launch", "com.roblox.client");
+            }
+        }, 350);
     }
 
     @Override

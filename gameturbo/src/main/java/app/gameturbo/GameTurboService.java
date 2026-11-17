@@ -120,6 +120,10 @@ public class GameTurboService extends Service {
         overlayPanel.setPadding(dp(6), dp(8), dp(6), dp(4));
         overlayPanel.setVisibility(View.GONE);
         root.addView(overlayPanel, new LinearLayout.LayoutParams(dp(190), -2));
+        addOverlayAction("Massinha + abrir Roblox", () -> openQuickMassinha("com.roblox.client", false));
+        addOverlayAction("Massinha + abrir Free Fire", () -> openQuickMassinha("FREE_FIRE", false));
+        addOverlayAction("Restaurar gráfico Roblox", () -> openQuickMassinha("com.roblox.client", true));
+        addOverlayAction("Restaurar gráfico Free Fire", () -> openQuickMassinha("FREE_FIRE", true));
         addOverlayAction("Abrir Game Turbo", () -> openMainApp());
         addOverlayAction("Abrir Roblox", () -> launchPackage("com.roblox.client"));
         addOverlayAction("Abrir Free Fire", () -> launchFreeFire());
@@ -314,6 +318,19 @@ public class GameTurboService extends Service {
         Intent intent = new Intent(this, MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(intent);
+    }
+
+    private void openQuickMassinha(String targetPackage, boolean restore) {
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setAction("app.gameturbo.QUICK_MASSINHA");
+        intent.putExtra("target_package", targetPackage);
+        intent.putExtra("restore", restore);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        try {
+            startActivity(intent);
+        } catch (Exception error) {
+            Toast.makeText(this, "Não foi possível abrir o controle do Modo Massinha.", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void launchFreeFire() {
