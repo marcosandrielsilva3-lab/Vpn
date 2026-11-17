@@ -1,38 +1,40 @@
 # Subway Surfers animation patch (ARM64 v1.105.0)
 
-This folder contains a reproducible patch script for the APK supplied by the user.
-It does **not** include or redistribute the proprietary game APK.
+This folder contains scripts for rebuilding a patched copy of the APK supplied
+by the user. It does not contain or redistribute the proprietary game APK.
 
-## What the patch changes
+## Installable build for Android 13
 
-Six 32-bit ARM64 instructions in `lib/arm64-v8a/libil2cpp.so` supply a
-0.125-second blend time to the identified jump/roll CrossFade paths. The earlier
-experimental build forced these inputs to zero and the user reported that the
-game closed on launch. This safer build uses a short nonzero value instead.
-It is not literal zero latency, and it does not remove frame-time, input, or
-animation-controller delays elsewhere in the game.
+Use `build_installable_v1.py` with the exact ARM64 v1.105.0 input APK. It:
 
-The application ID changes from `com.random.zurich` to
-`com.random.runner` (same-length manifest string) so the test build can be
-installed alongside the original and previous test package.
+- checks the original native instruction bytes before editing;
+- replaces six jump/roll blend-time inputs with 0.125 seconds;
+- changes the test package ID to `com.random.speedy` so it can be installed beside the original;
+- changes targetSdkVersion from 36 to 29;
+- stores and 4-byte aligns `resources.arsc`;
+- signs using standard JAR/V1 signing and verifies the result with `jarsigner`;
+- verifies ZIP CRCs and DEX checksums.
 
-## Rebuild and sign
+The earlier experimental packager used a hand-built APK Signature Scheme v2
+block. This reproducible builder deliberately avoids that custom signature
+implementation. It targets API 29 because Android 11+ requires V2 or newer
+for apps that target API 30+, while V1 is still supported for targetSdk 29.
+Android's official installation requirements also require `resources.arsc`
+to be uncompressed and 4-byte aligned when targeting API 30+.
 
-1. Use the exact ARM64 game APK v1.105.0:
-   `python patch_animation_delays.py original.apk output-unsigned.apk`
-2. Align the resource table:
-   `zipalign -f -p 4 output-unsigned.apk output-aligned.apk`
-3. Sign with V1 and V2 (V3 can also be enabled):
-   `apksigner sign --ks your-key.jks --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out output-signed.apk output-aligned.apk`
-4. Verify:
-   `apksigner verify --verbose --print-certs output-signed.apk`
-
-The supplied APK targets Android API 36. Android 11 and newer require APK
-Signature Scheme v2 or newer for apps targeting API 30+, and the resource table
-must be uncompressed and 4-byte aligned. See the official Android documentation:
+Official reference:
 https://developer.android.com/about/versions/11/behavior-changes-11
 
-## Compatibility
+## Build
 
-The patch is tied to the exact supplied ARM64 v1.105.0 native library. Other
-versions or CPU architectures require fresh analysis and verified offsets.
+1. Place the user's own `subwayZurich.apk` beside the script (or edit SOURCE).
+2. Run `python build_installable_v1.py` on a machine with Python 3, Java,
+   `keytool`, and `jarsigner`.
+3. Install `SubwaySurfers_InstalacaoCorrigida.apk`.
+
+## Limits
+
+The six edits shorten the identified blend intervals to 125 ms, not absolute
+zero. The script checks the APK structure and V1 signature, but cannot test
+launching or gameplay on a physical Samsung device. Other game versions or
+CPU architectures require fresh reverse engineering.
