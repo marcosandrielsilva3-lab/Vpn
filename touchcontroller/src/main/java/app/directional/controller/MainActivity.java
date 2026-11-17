@@ -133,11 +133,12 @@ public class MainActivity extends Activity {
     }
 
     private void prepareControls() {
-        if (!GestureAccessibilityService.isRunning()) {
+        if (!GestureAccessibilityService.isRunning() && !DirectionalOverlayService.hasFastInputPermission()) {
             new AlertDialog.Builder(this)
-                .setTitle("Ative o controle")
-                .setMessage("Ative Controle Direcional em Serviços instalados na Acessibilidade. O Shizuku acelera os gestos quando estiver autorizado, mas a Acessibilidade é mantida como alternativa.")
+                .setTitle("Ative um método de controle")
+                .setMessage("Ative Controle Direcional em Serviços instalados na Acessibilidade ou autorize o modo rápido Shizuku. Um dos dois precisa estar ativo.")
                 .setPositiveButton("Abrir Acessibilidade", (dialog, which) -> openAccessibilitySettings())
+                .setNeutralButton("Ativar Shizuku", (dialog, which) -> enableFastMode())
                 .setNegativeButton("Cancelar", null)
                 .show();
             return;
