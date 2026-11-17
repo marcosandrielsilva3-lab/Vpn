@@ -35,6 +35,15 @@ public class DirectionalOverlayService extends Service {
     private static final String CHANNEL = "directional_controls";
     private static final int NOTIFICATION_ID = 8101;
 
+    public static boolean hasFastInputPermission() {
+        try {
+            return Shizuku.pingBinder() && !Shizuku.isPreV11() &&
+                Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     private WindowManager wm;
     private View root;
     private WindowManager.LayoutParams params;
@@ -101,8 +110,8 @@ public class DirectionalOverlayService extends Service {
 
         if (START.equals(action)) {
             tryBindFastInjector();
-            if (!GestureAccessibilityService.isRunning()) {
-                Toast.makeText(this, "Ative o serviço de Acessibilidade ou conceda Shizuku no modo rápido.", Toast.LENGTH_LONG).show();
+            if (!GestureAccessibilityService.isRunning() && !hasFastInputPermission()) {
+                Toast.makeText(this, "Ative Acessibilidade ou conceda a permissão do modo rápido Shizuku.", Toast.LENGTH_LONG).show();
                 stopForeground(true);
                 stopSelf();
                 return START_NOT_STICKY;
@@ -319,19 +328,41 @@ public class DirectionalOverlayService extends Service {
         }
 
         IGestureShell shell = fastShell;
+        final int fSx = sx, fSy = sy, fEx = ex, fEy = ey;
         if (shell != null) {
-            final int fSx = sx, fSy = sy, fEx = ex, fEy = ey;
+            injectionExecutor.execute(() -> injectOrFallback(shell, direction, fSx, fSy, fEx, fEy));
+        } else if (hasFastInputPermission()) {
+            // The UserService starts asynchronously. Wait briefly for its Binder instead
+            // of dropping the first taps when the overlay is launched.
+            tryBindFastInjector();
             injectionExecutor.execute(() -> {
-                try {
-                    String result = shell.swipe(fSx, fSy, fEx, fEy, 38);
-                    if (result == null || !result.startsWith("EXIT:0")) {
-                        sendAccessibilityFallback(direction, fSx, fSy, fEx, fEy);
+                IGestureShell ready = fastShell;
+                for (int i = 0; ready == null && i < 30; i++) {
+                    try { Thread.sleep(8); } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
                     }
-                } catch (Throwable error) {
+                    ready = fastShell;
+                }
+                if (ready != null) {
+                    injectOrFallback(ready, direction, fSx, fSy, fEx, fEy);
+                } else {
                     sendAccessibilityFallback(direction, fSx, fSy, fEx, fEy);
                 }
             });
         } else {
+            sendAccessibilityFallback(direction, sx, sy, ex, ey);
+        }
+    }
+
+    private void injectOrFallback(IGestureShell shell, String direction,
+                                  int sx, int sy, int ex, int ey) {
+        try {
+            String result = shell.swipe(sx, sy, ex, ey, 38);
+            if (result == null || !result.startsWith("EXIT:0")) {
+                sendAccessibilityFallback(direction, sx, sy, ex, ey);
+            }
+        } catch (Throwable error) {
             sendAccessibilityFallback(direction, sx, sy, ex, ey);
         }
     }
