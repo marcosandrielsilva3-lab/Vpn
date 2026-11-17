@@ -12,6 +12,8 @@ import java.lang.reflect.Method;
 public class GestureShellService extends IGestureShell.Stub {
     private static Object inputManager;
     private static Method injectMethod;
+    private static Method setSourceMethod;
+    private static Method setDisplayIdMethod;
 
     @Override public String ping() throws RemoteException {
         try {
@@ -79,8 +81,22 @@ public class GestureShellService extends IGestureShell.Stub {
     }
 
     private static void configure(MotionEvent event) {
-        event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-        if (android.os.Build.VERSION.SDK_INT >= 29) event.setDisplayId(0);
+        try {
+            if (setSourceMethod == null) {
+                setSourceMethod = android.view.InputEvent.class.getDeclaredMethod("setSource", int.class);
+                setSourceMethod.setAccessible(true);
+            }
+            setSourceMethod.invoke(event, InputDevice.SOURCE_TOUCHSCREEN);
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                if (setDisplayIdMethod == null) {
+                    setDisplayIdMethod = android.view.InputEvent.class.getDeclaredMethod("setDisplayId", int.class);
+                    setDisplayIdMethod.setAccessible(true);
+                }
+                setDisplayIdMethod.invoke(event, 0);
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot configure touchscreen event", e);
+        }
     }
 
     private static void invokeInject(InputEvent event) throws Exception {
