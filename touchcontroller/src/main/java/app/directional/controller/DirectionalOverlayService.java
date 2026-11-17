@@ -5,7 +5,9 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.ComponentName;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
@@ -22,6 +24,11 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import rikka.shizuku.Shizuku;
+
 public class DirectionalOverlayService extends Service {
     private static final String START = "app.directional.controller.START";
     private static final String STOP = "app.directional.controller.STOP";
@@ -32,11 +39,57 @@ public class DirectionalOverlayService extends Service {
     private View root;
     private WindowManager.LayoutParams params;
 
+    // The Shizuku UserService injects touchscreen events as shell (ADB) identity.
+    // Accessibility remains as a compatibility fallback.
+    private volatile IGestureShell fastShell;
+    private volatile boolean fastBinding;
+    private volatile boolean fastBound;
+    private final ExecutorService injectionExecutor = Executors.newSingleThreadExecutor();
+
+    private final Shizuku.UserServiceArgs fastServiceArgs =
+        new Shizuku.UserServiceArgs(new ComponentName(
+            BuildConfig.APPLICATION_ID, GestureShellService.class.getName()))
+            .daemon(false)
+            .processNameSuffix("touchinject")
+            .debuggable(BuildConfig.DEBUG)
+            .version(BuildConfig.VERSION_CODE);
+
+    private final ServiceConnection fastConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder binder) {
+            fastBinding = false;
+            fastBound = true;
+            fastShell = IGestureShell.Stub.asInterface(binder);
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            fastShell = null;
+            fastBinding = false;
+            fastBound = false;
+        }
+    };
+
+    private final Shizuku.OnBinderReceivedListener binderReceivedListener =
+        this::tryBindFastInjector;
+    private final Shizuku.OnBinderDeadListener binderDeadListener = () -> {
+        fastShell = null;
+        fastBinding = false;
+        fastBound = false;
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         createChannel();
+        try {
+            Shizuku.addBinderReceivedListenerSticky(binderReceivedListener);
+            Shizuku.addBinderDeadListener(binderDeadListener);
+        } catch (Throwable ignored) {
+            // Shizuku is optional; AccessibilityService remains available.
+        }
+        tryBindFastInjector();
     }
 
     @Override
@@ -47,20 +100,34 @@ public class DirectionalOverlayService extends Service {
         }
 
         if (START.equals(action)) {
+            tryBindFastInjector();
             if (!GestureAccessibilityService.isRunning()) {
-                Toast.makeText(this, "Ative o serviço de Acessibilidade do Controle Direcional.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Ative o serviço de Acessibilidade ou conceda Shizuku no modo rápido.", Toast.LENGTH_LONG).show();
                 stopForeground(true);
                 stopSelf();
                 return START_NOT_STICKY;
             }
             showOverlay();
-            updateNotification("Setas prontas. Toque e solte para executar.");
+            updateNotification("Setas prontas. Toque e solte para mover.");
         } else if (STOP.equals(action)) {
             removeOverlay();
             stopForeground(true);
             stopSelf();
         }
         return START_NOT_STICKY;
+    }
+
+    private void tryBindFastInjector() {
+        if (fastShell != null || fastBinding) return;
+        try {
+            if (!Shizuku.pingBinder() || Shizuku.isPreV11()) return;
+            if (Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) return;
+            fastBinding = true;
+            Shizuku.bindUserService(fastServiceArgs, fastConnection);
+        } catch (Throwable ignored) {
+            fastBinding = false;
+            fastShell = null;
+        }
     }
 
     private void showOverlay() {
@@ -84,19 +151,24 @@ public class DirectionalOverlayService extends Service {
         drag.setPadding(dp(5), dp(2), dp(5), dp(3));
         panel.addView(drag, new LinearLayout.LayoutParams(-1, dp(25)));
 
+        int availableDp = (int) (getResources().getDisplayMetrics().widthPixels /
+            getResources().getDisplayMetrics().density) - 26;
+        int arrowWidthDp = Math.max(88, Math.min(108, availableDp / 3 - 6));
+        int arrowHeightDp = Math.max(94, Math.min(108, arrowWidthDp));
+
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER);
         top.addView(spacer());
-        top.addView(makeArrow("↑", "up"));
+        top.addView(makeArrow("↑", "up", arrowWidthDp, arrowHeightDp));
         top.addView(spacer());
-        panel.addView(top, new LinearLayout.LayoutParams(-1, dp(94)));
+        panel.addView(top, new LinearLayout.LayoutParams(-1, dp(arrowHeightDp + 6)));
 
         LinearLayout bottom = new LinearLayout(this);
         bottom.setGravity(Gravity.CENTER);
-        bottom.addView(makeArrow("←", "left"));
-        bottom.addView(makeArrow("↓", "down"));
-        bottom.addView(makeArrow("→", "right"));
-        panel.addView(bottom, new LinearLayout.LayoutParams(-1, dp(94)));
+        bottom.addView(makeArrow("←", "left", arrowWidthDp, arrowHeightDp));
+        bottom.addView(makeArrow("↓", "down", arrowWidthDp, arrowHeightDp));
+        bottom.addView(makeArrow("→", "right", arrowWidthDp, arrowHeightDp));
+        panel.addView(bottom, new LinearLayout.LayoutParams(-1, dp(arrowHeightDp + 6)));
 
         int type = Build.VERSION.SDK_INT >= 26
             ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -154,7 +226,7 @@ public class DirectionalOverlayService extends Service {
         return v;
     }
 
-    private TextView makeArrow(String symbol, String direction) {
+    private TextView makeArrow(String symbol, String direction, int widthDp, int heightDp) {
         TextView button = new TextView(this);
         button.setText(symbol);
         button.setTextColor(Color.WHITE);
@@ -166,12 +238,12 @@ public class DirectionalOverlayService extends Service {
         button.setHapticFeedbackEnabled(false);
         button.setContentDescription("Movimento " + direction);
 
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(92), dp(88));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(widthDp), dp(heightDp));
         lp.setMargins(dp(2), dp(2), dp(2), dp(2));
         button.setLayoutParams(lp);
 
-        // Only one command is emitted after a complete press-and-release.
-        // Dispatching during ACTION_DOWN can cancel the physical touch in progress.
+        // A press that begins on a button always counts when released, even if
+        // the finger drifts outside its visible rectangle before lifting.
         final int[] activePointerId = {-1};
         button.setOnTouchListener((view, event) -> {
             int action = event.getActionMasked();
@@ -187,16 +259,10 @@ public class DirectionalOverlayService extends Service {
 
             if (action == MotionEvent.ACTION_UP) {
                 int pointerId = event.getPointerId(actionIndex);
-                boolean isOurPress = pointerId == activePointerId[0];
-                boolean releasedInside = event.getX(actionIndex) >= 0 &&
-                    event.getX(actionIndex) <= view.getWidth() &&
-                    event.getY(actionIndex) >= 0 &&
-                    event.getY(actionIndex) <= view.getHeight();
-
-                if (isOurPress) {
+                if (pointerId == activePointerId[0]) {
                     activePointerId[0] = -1;
                     view.setAlpha(1f);
-                    if (releasedInside) sendGesture(direction);
+                    sendGesture(direction);
                 }
                 return true;
             }
@@ -223,15 +289,11 @@ public class DirectionalOverlayService extends Service {
         int width = size.x;
         int height = size.y;
 
-        if (width <= 0 || height <= 0) {
-            Toast.makeText(this, "Não foi possível detectar o tamanho da tela.", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (width <= 0 || height <= 0) return;
 
-        int centerX = width / 2;
         int sx, sy, ex, ey;
+        int centerX = width / 2;
 
-        // Gestures are placed in the central playable area, away from the overlay.
         if ("up".equals(direction)) {
             sx = centerX;
             sy = (int) (height * 0.68f);
@@ -256,8 +318,29 @@ public class DirectionalOverlayService extends Service {
             return;
         }
 
-        if (!GestureAccessibilityService.sendSwipe(direction, sx, sy, ex, ey, 80)) {
-            Toast.makeText(this, "O serviço de Acessibilidade não está ativo.", Toast.LENGTH_SHORT).show();
+        IGestureShell shell = fastShell;
+        if (shell != null) {
+            final int fSx = sx, fSy = sy, fEx = ex, fEy = ey;
+            injectionExecutor.execute(() -> {
+                try {
+                    String result = shell.swipe(fSx, fSy, fEx, fEy, 38);
+                    if (result == null || !result.startsWith("EXIT:0")) {
+                        sendAccessibilityFallback(direction, fSx, fSy, fEx, fEy);
+                    }
+                } catch (Throwable error) {
+                    sendAccessibilityFallback(direction, fSx, fSy, fEx, fEy);
+                }
+            });
+        } else {
+            sendAccessibilityFallback(direction, sx, sy, ex, ey);
+        }
+    }
+
+    private void sendAccessibilityFallback(String direction, int sx, int sy, int ex, int ey) {
+        if (!GestureAccessibilityService.sendSwipe(direction, sx, sy, ex, ey, 38)) {
+            // If the fast service is still connecting and accessibility is also off,
+            // surface a single clear message rather than silently eating the tap.
+            Toast.makeText(this, "Ative Acessibilidade ou o modo rápido Shizuku.", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -293,7 +376,7 @@ public class DirectionalOverlayService extends Service {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL, "Controles na tela", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("Mantém as setas direcionais translúcidas visíveis durante o jogo.");
+            channel.setDescription("Mantém as setas translúcidas visíveis durante o jogo.");
             ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(channel);
         }
     }
@@ -313,6 +396,14 @@ public class DirectionalOverlayService extends Service {
     @Override
     public void onDestroy() {
         removeOverlay();
+        try {
+            Shizuku.removeBinderReceivedListener(binderReceivedListener);
+            Shizuku.removeBinderDeadListener(binderDeadListener);
+            if (fastBound || fastBinding) {
+                Shizuku.unbindUserService(fastServiceArgs, fastConnection, true);
+            }
+        } catch (Throwable ignored) {}
+        injectionExecutor.shutdownNow();
         super.onDestroy();
     }
 
