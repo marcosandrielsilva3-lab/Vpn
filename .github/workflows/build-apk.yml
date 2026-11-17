@@ -21,7 +21,7 @@ jobs:
         with:
           gradle-version: "8.9"
       - name: Build both Android APKs
-        run: gradle :app:assembleDebug :gameturbo:assembleDebug
+        run: gradle :app:assembleDebug :gameturbo:assembleDebug :touchcontroller:assembleDebug
       - name: Upload VPN APK
         uses: actions/upload-artifact@v4
         with:
@@ -33,4 +33,10 @@ jobs:
         with:
           name: GameTurbo-APK
           path: gameturbo/build/outputs/apk/debug/gameturbo-debug.apk
+          if-no-files-found: error
+      - name: Build Directional Controller APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DirectionalController-APK
+          path: touchcontroller/build/outputs/apk/debug/touchcontroller-debug.apk
           if-no-files-found: error
