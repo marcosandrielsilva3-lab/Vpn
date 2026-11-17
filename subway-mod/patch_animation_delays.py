@@ -6,7 +6,7 @@ Usage:
 
 This patches only six AArch64 constants used by the identified jump/roll
 CrossFade paths, then changes the manifest application ID to
-com.random.surfer so it can be installed alongside the original package.
+com.random.runner so it can be installed alongside the original and previous test package.
 It does not include or redistribute the game's APK.
 """
 from pathlib import Path
@@ -23,15 +23,15 @@ SEGMENTS = [
     (0x2E05730, 0x2E11730, 0x1CDEE8),
 ]
 PATCHES = [
-    (0x1647ADC, bytes.fromhex("e8 03 27 1e"), "roll 0.20s -> 0"),
-    (0x1647B40, bytes.fromhex("e0 03 27 1e"), "roll 0.10s -> 0"),
-    (0x1647E08, bytes.fromhex("e8 03 27 1e"), "jump 0.15s -> 0"),
-    (0x1647E14, bytes.fromhex("e0 03 27 1e"), "alternate jump 1.00s -> 0"),
-    (0x164DFDC, bytes.fromhex("e8 03 27 1e"), "roll coroutine 0.10s -> 0"),
-    (0x164E00C, bytes.fromhex("e9 03 27 1e"), "hoverboard roll 0.20s -> 0"),
+    (0x1647ADC, bytes.fromhex("08 10 28 1e"), "CrossFade 0.20s -> 0.125s"),
+    (0x1647B40, bytes.fromhex("00 10 28 1e"), "CrossFadeQueued 0.10s -> 0.125s"),
+    (0x1647E08, bytes.fromhex("08 10 28 1e"), "CrossFade 0.15s -> 0.125s"),
+    (0x1647E14, bytes.fromhex("00 10 28 1e"), "fallback 1.00s -> 0.125s"),
+    (0x164DFDC, bytes.fromhex("08 10 28 1e"), "CrossFade 0.10s -> 0.125s"),
+    (0x164E00C, bytes.fromhex("09 10 28 1e"), "CrossFade 0.20s -> 0.125s"),
 ]
 OLD_PACKAGE = "com.random.zurich"
-NEW_PACKAGE = "com.random.surfer"
+NEW_PACKAGE = "com.random.runner"
 
 
 def va_to_offset(va: int) -> int:
@@ -96,8 +96,16 @@ def patch_native(data: bytes):
     for va, replacement, label in PATCHES:
         off = va_to_offset(va)
         original = bytes(buf[off:off + 4])
-        if len(original) != 4 or original == replacement:
-            raise ValueError(f"Unexpected native instruction at {va:#x}")
+        expected = {
+            0x1647ADC: bytes.fromhex("08 71 40 bd"),
+            0x1647B40: bytes.fromhex("00 91 4e bd"),
+            0x1647E08: bytes.fromhex("28 89 4d bd"),
+            0x1647E14: bytes.fromhex("00 10 2e 1e"),
+            0x164DFDC: bytes.fromhex("08 91 4e bd"),
+            0x164E00C: bytes.fromhex("09 71 40 bd"),
+        }[va]
+        if len(original) != 4 or original != expected:
+            raise ValueError(f"Unexpected native instruction at {va:#x}: {original.hex()}")
         buf[off:off + 4] = replacement
         audit.append((hex(va), original.hex(), replacement.hex(), label))
     return bytes(buf), audit
@@ -131,7 +139,8 @@ def main():
     print(f"Native patch count: {len(audit)}")
     for row in audit:
         print(" | ".join(row))
-    print("Sign the output with your own local key before installing.")
+    print("Each targeted animation blend input is set to 0.125 seconds, not zero.")
+    print("Align and sign with APK Signature Scheme v2 or newer before installing.")
 
 
 if __name__ == "__main__":
