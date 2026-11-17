@@ -5,6 +5,7 @@ import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.accessibility.AccessibilityEvent;
 import android.widget.Toast;
 import java.util.ArrayDeque;
 
@@ -34,6 +35,11 @@ public class GestureAccessibilityService extends AccessibilityService {
     protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+    }
+
+    @Override
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        // Gestures only: this service does not inspect event content.
     }
 
     private void dispatchNext() {
