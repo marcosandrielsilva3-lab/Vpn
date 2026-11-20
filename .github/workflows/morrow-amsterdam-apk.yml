@@ -1,0 +1,65 @@
+name: Build and publish Subway Amsterdam APK
+
+on:
+  push:
+    branches:
+      - morrow-amsterdam-apk
+    paths:
+      - "morrow-amsterdam-apk/**"
+      - ".github/workflows/morrow-amsterdam-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build debug APK
+        run: gradle -p morrow-amsterdam-apk --no-daemon :app:assembleDebug
+
+      - name: Prepare APK file
+        run: cp morrow-amsterdam-apk/app/build/outputs/apk/debug/app-debug.apk Subway-Amsterdam.apk
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Subway-Amsterdam-APK
+          path: Subway-Amsterdam.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish APK in GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: subway-amsterdam-apk-v1.0.0
+          name: Subway Amsterdam APK v1.0.0
+          body: |
+            APK Android para abrir o Subway Surfers Amsterdam no endereço original da Morrow.
+
+            Este aplicativo é uma WebView: requer internet e carrega o jogo pelo site. Não é uma versão nativa/offline e não garante resolver travamentos do navegador.
+          files: Subway-Amsterdam.apk
+          make_latest: true
