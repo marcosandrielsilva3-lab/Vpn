@@ -49,7 +49,7 @@ jobs:
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Subway-Amsterdam-APK
+          name: Subway-Amsterdam-APK-v1.1.0
           path: Subway-Amsterdam.apk
           if-no-files-found: error
           retention-days: 30
@@ -57,10 +57,10 @@ jobs:
       - name: Publish APK in GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: subway-amsterdam-apk-v1.0.0
-          name: Subway Amsterdam APK v1.0.0
+          tag_name: subway-amsterdam-apk-v1.1.0
+          name: Subway Amsterdam APK v1.1.0
           body: |
-            APK Android para abrir o Subway Surfers Amsterdam no endereço original da Morrow.
+            APK Android para abrir o Subway Surfers Amsterdam no endereço original da Morrow.\n\n            Versão 1.1: melhora o encaminhamento de gestos de toque e multitoque no Android; não injeta comandos nem altera a lógica do jogo.
 
             Este aplicativo é uma WebView: requer internet e carrega o jogo pelo site. Não é uma versão nativa/offline e não garante resolver travamentos do navegador.
           files: Subway-Amsterdam.apk
