@@ -2,11 +2,14 @@ package com.morrow.amsterdam;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
@@ -18,17 +21,68 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
-import android.content.Intent;
 
 public class MainActivity extends Activity {
     private static final String GAME_URL =
             "https://morrowplay.com/play/subway-surfers/amsterdam/?edition=amsterdam&mode=original";
 
-    private WebView webView;
+    private TouchSafeWebView webView;
     private ProgressBar progressBar;
     private FrameLayout root;
     private View fullscreenView;
     private WebChromeClient.CustomViewCallback fullscreenCallback;
+
+    /**
+     * Keeps the Android parent from stealing a gesture after it starts.
+     * Every MotionEvent is still passed unchanged to WebView; this class
+     * does not synthesize taps, swipes or keyboard events.
+     */
+    private static final class TouchSafeWebView extends WebView {
+        TouchSafeWebView(Activity activity) {
+            super(activity);
+            setFocusable(true);
+            setFocusableInTouchMode(true);
+            setClickable(true);
+            setLongClickable(false);
+            setVerticalScrollBarEnabled(false);
+            setHorizontalScrollBarEnabled(false);
+            setOverScrollMode(View.OVER_SCROLL_NEVER);
+            setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (event == null) {
+                return super.onTouchEvent(null);
+            }
+
+            final int action = event.getActionMasked();
+            final ViewParent parent = getParent();
+
+            // Keep the complete single- or multi-finger gesture in this WebView.
+            if (parent != null &&
+                    action != MotionEvent.ACTION_UP &&
+                    action != MotionEvent.ACTION_CANCEL) {
+                parent.requestDisallowInterceptTouchEvent(true);
+            }
+
+            // Game canvases and embedded frames often need a focused view.
+            if (action == MotionEvent.ACTION_DOWN ||
+                    action == MotionEvent.ACTION_POINTER_DOWN) {
+                requestFocus(View.FOCUS_DOWN);
+            }
+
+            // Do not consume or modify the event: Chromium receives the original.
+            final boolean handled = super.onTouchEvent(event);
+
+            if (parent != null &&
+                    (action == MotionEvent.ACTION_UP ||
+                     action == MotionEvent.ACTION_CANCEL)) {
+                parent.requestDisallowInterceptTouchEvent(false);
+            }
+            return handled;
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -39,9 +93,10 @@ public class MainActivity extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(0xFF000000);
 
-        webView = new WebView(this);
+        webView = new TouchSafeWebView(this);
         webView.setBackgroundColor(0xFF000000);
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        // Hardware acceleration is enabled in the manifest. Avoid forcing
+        // an extra hardware layer, which can add an unnecessary render surface.
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -56,6 +111,8 @@ public class MainActivity extends Activity {
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setSupportZoom(false);
+        settings.setNeedInitialFocus(true);
+        settings.setDefaultTextEncodingName("UTF-8");
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
@@ -87,6 +144,8 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 progressBar.setVisibility(View.GONE);
+                // Restore focus after navigation; later touches also request it.
+                view.requestFocus(View.FOCUS_DOWN);
             }
         });
 
@@ -129,6 +188,8 @@ public class MainActivity extends Activity {
         progressBar.setMax(100);
         progressBar.setProgress(0);
         progressBar.setIndeterminate(false);
+        progressBar.setClickable(false);
+        progressBar.setFocusable(false);
 
         root.addView(webView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -139,6 +200,7 @@ public class MainActivity extends Activity {
         root.addView(progressBar, progressParams);
         setContentView(root);
 
+        webView.requestFocus(View.FOCUS_DOWN);
         if (savedInstanceState == null) {
             webView.loadUrl(GAME_URL);
         } else {
@@ -192,6 +254,23 @@ public class MainActivity extends Activity {
         if (hasFocus) enterImmersiveMode();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            webView.onResume();
+            webView.requestFocus(View.FOCUS_DOWN);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        if (webView != null) {
+            webView.onPause();
+        }
+        super.onPause();
+    }
+
     private void exitFullscreen() {
         if (fullscreenView == null) return;
         root.removeView(fullscreenView);
@@ -201,6 +280,7 @@ public class MainActivity extends Activity {
             fullscreenCallback = null;
         }
         webView.setVisibility(View.VISIBLE);
+        webView.requestFocus(View.FOCUS_DOWN);
         enterImmersiveMode();
     }
 
